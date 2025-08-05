@@ -3,11 +3,13 @@ import feedparser, openai
 from dateutil.parser import parse as dt
 from datetime import datetime
 from news_db import init, insert, latest
-from app import sh   # återanvänder redan auktoriserat Google Sheet-objekt
 
 openai.api_key = os.environ["OPENAI_API_KEY"]
 
 def fetch_and_summarize():
+    # importeras här för att undvika cirkulär import
+    from app import sh
+
     init()
     rows = sh.worksheet("Inställningar").get_all_records()
 
@@ -18,9 +20,10 @@ def fetch_and_summarize():
             continue
 
         parsed = feedparser.parse(feed_url)
-        for entry in parsed.entries[:10]:  # max 10 per feed
+        for entry in parsed.entries[:10]:  # max 10 artiklar per feed
             art_id = hashlib.sha1(entry.link.encode()).hexdigest()
-            # Skippa om redan sparad:
+
+            # hoppa om redan i databasen
             if any(a["id"] == art_id for a in latest(1)):
                 continue
 
