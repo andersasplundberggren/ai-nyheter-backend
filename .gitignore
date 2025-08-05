@@ -1,0 +1,9 @@
+# python
+__pycache__/
+*.pyc
+
+# virtualenv / yet to deploy
+venv/
+
+# Google credentials (läggs aldrig i repo!)
+service_account.json
