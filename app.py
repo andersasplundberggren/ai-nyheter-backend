@@ -8,7 +8,7 @@ from flask_cors import CORS
 import gspread
 from google.oauth2.service_account import Credentials
 
-from news_db import latest
+from news_db import latest                # hämta artiklar ur SQLite
 
 # ────────── Google Sheets ──────────
 SCOPES = [
@@ -43,12 +43,24 @@ def settings():
     ws = sh.worksheet("Inställningar")
     return jsonify(ws.get_all_records())
 
-# 2. /api/news -----------------------------------------------------
+# 2. /api/news  (framsidans 20 senaste) ----------------------------
 @app.route("/api/news")
 def news():
     return jsonify(latest(20))
 
-# 3. /api/subscribe ------------------------------------------------
+# 3. /api/archive (paginerat arkiv) -------------------------------
+@app.route("/api/archive")
+def archive():
+    """Ex: /api/archive?page=2&per=40"""
+    page = int(request.args.get("page", 1))
+    per  = int(request.args.get("per", 40))
+    offset = (page - 1) * per
+
+    # hämta lite mer än vi behöver och skiva
+    articles = latest(offset + per)
+    return jsonify(articles[offset : offset + per])
+
+# 4. /api/subscribe -----------------------------------------------
 EMAIL_RE = re.compile(r"^[^@]+@[^@]+\.[^@]+$")
 
 @app.route("/api/subscribe", methods=["POST"])
@@ -78,14 +90,14 @@ def subscribe():
         ws.append_row([name, email, cat_str])
         return jsonify({"created": True}), 201
 
-# 4. /api/subscribers ----------------------------------------------
+# 5. /api/subscribers ----------------------------------------------
 @app.route("/api/subscribers")
 @admin_required
 def subscribers():
     ws = sh.worksheet("Prenumeranter")
     return jsonify(ws.get_all_records())
 
-# 5. /api/delete-subscriber ----------------------------------------
+# 6. /api/delete-subscriber ----------------------------------------
 @app.route("/api/delete-subscriber", methods=["POST"])
 @admin_required
 def delete_subscriber():
@@ -104,7 +116,7 @@ def delete_subscriber():
 
     return jsonify({"deleted_rows": len(rows)})
 
-# 6. Webhook som GitHub-Actions kallar ------------------------------
+# 7. Webhook som GitHub Actions kallar -----------------------------
 @app.route("/admin/run-fetch", methods=["POST"])
 @admin_required
 def run_fetch():
