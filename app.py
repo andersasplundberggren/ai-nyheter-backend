@@ -1,5 +1,7 @@
 import os
 import re
+from functools import wraps
+
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 import gspread
@@ -11,8 +13,9 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive",
 ]
 
-CREDS_PATH     = "/etc/secrets/service_account.json"         # Render Secret File
-SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID")            # sätts i Render-env
+CREDS_PATH     = "/etc/secrets/service_account.json"
+SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID")          # måste finnas i Render env
+ADMIN_TOKEN    = os.environ.get("ADMIN_TOKEN")             # lägger vi strax
 
 creds = Credentials.from_service_account_file(CREDS_PATH, scopes=SCOPES)
 gc    = gspread.authorize(creds)
@@ -20,16 +23,25 @@ sh    = gc.open_by_key(SPREADSHEET_ID)
 
 # ────────── Flask ──────────
 app = Flask(__name__)
-CORS(app, resources={r"/api/*": {"origins": "*"}})           # öppna CORS för API
+CORS(app, resources={r"/api/*": {"origins": "*"}})
 
-# ────────── 1. Settings (GET) ──────────
+# ────────── Hjälpdekorator: admin-header ──────────
+def admin_required(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        token = request.headers.get("X-Admin-Token")
+        if token != ADMIN_TOKEN:
+            return jsonify({"error": "Unauthorized"}), 401
+        return fn(*args, **kwargs)
+    return wrapper
+
+# ────────── 1. /api/settings (GET) ──────────
 @app.route("/api/settings")
 def settings():
-    """Returnerar alla rader i fliken 'Inställningar'."""
     ws = sh.worksheet("Inställningar")
-    return jsonify(ws.get_all_records())                      # list[dict]
+    return jsonify(ws.get_all_records())
 
-# ────────── 2. Hårdkodade nyheter (GET) ──────────
+# ────────── 2. /api/news (GET) ──────────
 DEMO_NEWS = [
     {
         "id": 1,
@@ -46,24 +58,20 @@ DEMO_NEWS = [
         "date":  "2025-07-30"
     }
 ]
-
 @app.route("/api/news")
 def news():
-    """Returnerar hårdkodade demo-nyheter tills RSS + AI kopplas på."""
     return jsonify(sorted(DEMO_NEWS, key=lambda n: n["date"], reverse=True))
 
-# ────────── 3. Subscribe (POST) ──────────
+# ────────── 3. /api/subscribe (POST) ──────────
 EMAIL_RE = re.compile(r"^[^@]+@[^@]+\.[^@]+$")
 
 @app.route("/api/subscribe", methods=["POST"])
 def subscribe():
-    """Lägger till prenumerant i fliken 'Prenumeranter'."""
     data = request.get_json(silent=True) or {}
     name       = (data.get("name") or "").strip()
     email      = (data.get("email") or "").strip().lower()
     categories = data.get("categories") or []
 
-    # — validering —
     if not name:
         return jsonify({"error": "Name is required"}), 400
     if not EMAIL_RE.match(email):
@@ -73,18 +81,38 @@ def subscribe():
 
     cat_str = ",".join(categories) if categories else "ALL"
 
-    try:
-        ws = sh.worksheet("Prenumeranter")
-        ws.append_row([name, email, cat_str])
-        return jsonify({"ok": True}), 201
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    ws = sh.worksheet("Prenumeranter")
+    ws.append_row([name, email, cat_str])
+    return jsonify({"ok": True}), 201
 
-# ────────── (Frivillig) Rot-route ──────────
+# ────────── 4. /api/subscribers (GET) ──────────
+@app.route("/api/subscribers")
+@admin_required
+def subscribers():
+    ws = sh.worksheet("Prenumeranter")
+    return jsonify(ws.get_all_records())
+
+# ────────── 5. /api/delete-subscriber (POST) ──────────
+@app.route("/api/delete-subscriber", methods=["POST"])
+@admin_required
+def delete_subscriber():
+    email = (request.get_json(silent=True) or {}).get("email", "").lower().strip()
+    if not email:
+        return jsonify({"error": "Email required"}), 400
+
+    ws = sh.worksheet("Prenumeranter")
+    emails = ws.col_values(2)                       # kolumn E-post
+    try:
+        idx = [e.lower() for e in emails].index(email) + 1  # Sheets är 1-baserat
+        ws.delete_rows(idx)
+        return jsonify({"deleted": True}), 200
+    except ValueError:
+        return jsonify({"error": "Email not found"}), 404
+
+# ────────── Rot - bara info ──────────
 @app.route("/")
 def index():
     return "AI-Nyheter API v1", 200
 
-# ────────── Main (lokal körning) ──────────
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
