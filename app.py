@@ -7,7 +7,8 @@ from flask_cors import CORS
 import gspread
 from google.oauth2.service_account import Credentials
 
-from news_db import latest          # ← NYTT: hämta artiklar från SQLite
+from news_db import latest                # hämtar artiklar från SQLite
+from rss_ai  import fetch_and_summarize   # <-- NYTT: webhook-funktion
 
 # ────────── Google Sheets ──────────
 SCOPES = [
@@ -36,18 +37,18 @@ def admin_required(fn):
         return fn(*args, **kwargs)
     return wrapper
 
-# ────────── 1. /api/settings (GET) ──────────
+# ────────── 1. /api/settings ──────────
 @app.route("/api/settings")
 def settings():
     ws = sh.worksheet("Inställningar")
     return jsonify(ws.get_all_records())
 
-# ────────── 2. /api/news (GET) – nu från DB ──────────
+# ────────── 2. /api/news ──────────
 @app.route("/api/news")
 def news():
-    return jsonify(latest(20))  # 20 senaste artiklarna från news.sqlite
+    return jsonify(latest(20))            # 20 senaste artiklarna
 
-# ────────── 3. /api/subscribe (POST) – duplicate-skydd ──────────
+# ────────── 3. /api/subscribe ──────────
 EMAIL_RE = re.compile(r"^[^@]+@[^@]+\.[^@]+$")
 
 @app.route("/api/subscribe", methods=["POST"])
@@ -77,14 +78,14 @@ def subscribe():
         ws.append_row([name, email, cat_str])
         return jsonify({"created": True}), 201
 
-# ────────── 4. /api/subscribers (GET) ──────────
+# ────────── 4. /api/subscribers ──────────
 @app.route("/api/subscribers")
 @admin_required
 def subscribers():
     ws = sh.worksheet("Prenumeranter")
     return jsonify(ws.get_all_records())
 
-# ────────── 5. /api/delete-subscriber (POST) ──────────
+# ────────── 5. /api/delete-subscriber ──────────
 @app.route("/api/delete-subscriber", methods=["POST"])
 @admin_required
 def delete_subscriber():
@@ -102,6 +103,13 @@ def delete_subscriber():
         ws.delete_rows(idx)
 
     return jsonify({"deleted_rows": len(rows)}), 200
+
+# ────────── 6. Webhook för GitHub Actions ──────────
+@app.route("/admin/run-fetch", methods=["POST"])
+@admin_required
+def run_fetch():
+    fetch_and_summarize()
+    return jsonify({"ok": True}), 200
 
 # ────────── Root ──────────
 @app.route("/")
