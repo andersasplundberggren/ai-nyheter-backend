@@ -8,7 +8,7 @@ from flask_cors import CORS
 import gspread
 from google.oauth2.service_account import Credentials
 
-from news_db import latest                # hämta artiklar ur SQLite
+from news_db import latest  # hämta artiklar ur SQLite
 
 # ────────── Google Sheets ──────────
 SCOPES = [
@@ -22,7 +22,7 @@ ADMIN_TOKEN    = os.environ.get("ADMIN_TOKEN")
 
 creds = Credentials.from_service_account_file(CREDS_PATH, scopes=SCOPES)
 gc    = gspread.authorize(creds)
-sh    = gc.open_by_key(SPREADSHEET_ID)      # tillgängligt för rss_ai
+sh    = gc.open_by_key(SPREADSHEET_ID)        # tillgängligt för rss_ai
 
 # ────────── Flask ──────────
 app = Flask(__name__)
@@ -43,21 +43,39 @@ def settings():
     ws = sh.worksheet("Inställningar")
     return jsonify(ws.get_all_records())
 
-# 2. /api/news  (framsidans 20 senaste) ----------------------------
+# 2. /api/news  (för framsidan) -----------------------------------
 @app.route("/api/news")
 def news():
-    return jsonify(latest(20))
+    return jsonify(latest(20))               # 20 senaste
 
-# 3. /api/archive (paginerat arkiv) -------------------------------
+# 3. /api/archive  (paginering + filter + sök) --------------------
 @app.route("/api/archive")
 def archive():
-    """Ex: /api/archive?page=2&per=40"""
-    page = int(request.args.get("page", 1))
-    per  = int(request.args.get("per", 40))
-    offset = (page - 1) * per
+    """
+    Exempel:
+      /api/archive?page=2&per=40
+      /api/archive?cat=Teknik%20och%20digitalisering&q=robot
+    """
+    page = max(1, int(request.args.get("page", 1)))
+    per  = max(5, int(request.args.get("per", 40)))
 
-    # hämta lite mer än vi behöver och skiva
-    articles = latest(offset + per)
+    cat_filter = request.args.get("cat", "").strip().lower()
+    query      = request.args.get("q",   "").strip().lower()
+
+    # hämta generöst många poster så filter fortfarande har buffert
+    buffer_size = 2000                      # justera vid behov
+    articles = latest(buffer_size)
+
+    if cat_filter:
+        articles = [a for a in articles if a["category"].lower() == cat_filter]
+
+    if query:
+        articles = [
+            a for a in articles
+            if query in a["title"].lower() or query in a["summary"].lower()
+        ]
+
+    offset = (page - 1) * per
     return jsonify(articles[offset : offset + per])
 
 # 4. /api/subscribe -----------------------------------------------
@@ -90,14 +108,14 @@ def subscribe():
         ws.append_row([name, email, cat_str])
         return jsonify({"created": True}), 201
 
-# 5. /api/subscribers ----------------------------------------------
+# 5. /api/subscribers ---------------------------------------------
 @app.route("/api/subscribers")
 @admin_required
 def subscribers():
     ws = sh.worksheet("Prenumeranter")
     return jsonify(ws.get_all_records())
 
-# 6. /api/delete-subscriber ----------------------------------------
+# 6. /api/delete-subscriber ---------------------------------------
 @app.route("/api/delete-subscriber", methods=["POST"])
 @admin_required
 def delete_subscriber():
@@ -107,7 +125,7 @@ def delete_subscriber():
 
     ws = sh.worksheet("Prenumeranter")
     lowers = [e.lower() for e in ws.col_values(2)]
-    rows   = [i+1 for i, e in enumerate(lowers) if e == email]
+    rows   = [i + 1 for i, e in enumerate(lowers) if e == email]
     if not rows:
         return jsonify({"error": "Email not found"}), 404
 
@@ -116,7 +134,7 @@ def delete_subscriber():
 
     return jsonify({"deleted_rows": len(rows)})
 
-# 7. Webhook som GitHub Actions kallar -----------------------------
+# 7. Webhook som GitHub-Actions kallar ----------------------------
 @app.route("/admin/run-fetch", methods=["POST"])
 @admin_required
 def run_fetch():
@@ -124,7 +142,7 @@ def run_fetch():
     fetch_and_summarize()
     return jsonify({"ok": True})
 
-# Root --------------------------------------------------------------
+# Root ------------------------------------------------------------
 @app.route("/")
 def index():
     return "AI-Nyheter API v1", 200
