@@ -28,5 +28,31 @@ def settings():
 
 # – fler endpoints lägger vi till efter hand –
 
+# -------- Hårdkodade nyheter (demo) ----------
+DEMO_NEWS = [
+    {
+        "id": 1,
+        "title":  "OpenAI lanserar GPT-5-förhandsvisning",
+        "summary": "Nya versionen fokuserar på tillförlitlighet och multimodalitet...",
+        "url":   "https://example.com/openai-gpt5",
+        "date":  "2025-08-04"
+    },
+    {
+        "id": 2,
+        "title":  "EU klubbar AI-förordningen (AI Act)",
+        "summary": "Parlamentet har röstat igenom sluttexten som träder i kraft 2026...",
+        "url":   "https://example.com/eu-ai-act",
+        "date":  "2025-07-30"
+    }
+]
+
+@app.route("/api/news")
+def news():
+    """Returnerar hårdkodade demo-nyheter tills vi kopplar RSS + AI."""
+    # Sortera senaste först
+    sorted_news = sorted(DEMO_NEWS, key=lambda n: n["date"], reverse=True)
+    return jsonify(sorted_news)
+
+
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
