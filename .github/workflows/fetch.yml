@@ -1,11 +1,10 @@
 name: Fetch RSS & AI
 
-# Körs automatiskt varje hel timme + kan startas manuellt
 on:
   schedule:
-    # cron-tid anges i UTC — här: 0 minuter varje timme
+    # kör varje hel timme (UTC)
     - cron: '0 * * * *'
-  workflow_dispatch:   # gör att du kan klicka ”Run workflow” manuellt
+  workflow_dispatch:   # gör att du kan köra manuellt
 
 jobs:
   fetch:
