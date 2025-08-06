@@ -1,1 +1,19 @@
-yaml<br>name: Fetch RSS & AI<br><br>on:<br> schedule:<br> # varje hel timme (justera cron vid behov)<br> - cron: '0 * * * *'<br> workflow_dispatch: # gör att du kan starta manuellt från GitHub-UI<br><br>jobs:<br> fetch:<br> runs-on: ubuntu-latest<br> steps:<br> - name: Call /admin/run-fetch<br> run: curl -X POST \\\n -H \"X-Admin-Token: ${{ secrets.ADMIN_TOKEN }}\" \\\n https://ai-nyheter-backend.onrender.com/admin/run-fetch<br>
+name: Fetch RSS & AI
+
+# Körs automatiskt varje hel timme + kan startas manuellt
+on:
+  schedule:
+    # cron-tid anges i UTC — här: 0 minuter varje timme
+    - cron: '0 * * * *'
+  workflow_dispatch:   # gör att du kan klicka ”Run workflow” manuellt
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Call /admin/run-fetch
+        run: |
+          curl -X POST \
+               -H "X-Admin-Token: ${{ secrets.ADMIN_TOKEN }}" \
+               https://ai-nyheter-backend.onrender.com/admin/run-fetch
