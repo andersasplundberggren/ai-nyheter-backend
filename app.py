@@ -13,6 +13,7 @@ from news_db import latest, init as db_init   # ← init-funktionen
 
 # ────────── Initiera DB vid varje cold-start ──────────
 db_init()
+print("[app] DB init klar")   # syns i Render-loggarna
 
 # ────────── Google Sheets ──────────
 SCOPES = [
