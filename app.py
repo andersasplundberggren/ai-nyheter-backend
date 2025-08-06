@@ -1,14 +1,18 @@
-import os
-import re
+import os, re
 from functools import wraps
 from importlib import import_module
+from threading import Thread
+from urllib.parse import unquote_plus
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 import gspread
 from google.oauth2.service_account import Credentials
 
-from news_db import latest  # hämta artiklar ur SQLite
+from news_db import latest, init as db_init   # ← init-funktionen
+
+# ────────── Initiera DB vid varje cold-start ──────────
+db_init()
 
 # ────────── Google Sheets ──────────
 SCOPES = [
@@ -17,8 +21,8 @@ SCOPES = [
 ]
 
 CREDS_PATH     = "/etc/secrets/service_account.json"
-SPREADSHEET_ID = os.environ.get("SPREADSHEET_ID")
-ADMIN_TOKEN    = os.environ.get("ADMIN_TOKEN")
+SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
+ADMIN_TOKEN    = os.getenv("ADMIN_TOKEN")
 
 creds = Credentials.from_service_account_file(CREDS_PATH, scopes=SCOPES)
 gc    = gspread.authorize(creds)
@@ -43,47 +47,39 @@ def settings():
     ws = sh.worksheet("Inställningar")
     return jsonify(ws.get_all_records())
 
-# 2. /api/news  (för framsidan) -----------------------------------
+# 2. /api/news -----------------------------------------------------
 @app.route("/api/news")
 def news():
     return jsonify(latest(20))               # 20 senaste
 
-# 3. /api/archive  (paginering + filter + sök) --------------------
+# 3. /api/archive --------------------------------------------------
 @app.route("/api/archive")
 def archive():
-    """
-    Exempel:
-      /api/archive?page=2&per=40
-      /api/archive?cat=Teknik%20och%20digitalisering&q=robot
-    """
     page = max(1, int(request.args.get("page", 1)))
     per  = max(5, int(request.args.get("per", 40)))
 
-    cat_filter = request.args.get("cat", "").strip().lower()
-    query      = request.args.get("q",   "").strip().lower()
+    cat_filter = unquote_plus(request.args.get("cat", "")).strip().lower()
+    query      = unquote_plus(request.args.get("q",   "")).strip().lower()
 
-    # hämta generöst många poster så filter fortfarande har buffert
-    buffer_size = 2000                      # justera vid behov
-    articles = latest(buffer_size)
+    articles = latest(2000)                  # buffert
 
     if cat_filter:
         articles = [a for a in articles if a["category"].lower() == cat_filter]
-
     if query:
         articles = [
             a for a in articles
             if query in a["title"].lower() or query in a["summary"].lower()
         ]
 
-    offset = (page - 1) * per
-    return jsonify(articles[offset : offset + per])
+    off = (page - 1) * per
+    return jsonify(articles[off : off + per])
 
 # 4. /api/subscribe -----------------------------------------------
 EMAIL_RE = re.compile(r"^[^@]+@[^@]+\.[^@]+$")
 
 @app.route("/api/subscribe", methods=["POST"])
 def subscribe():
-    data = request.get_json(silent=True) or {}
+    data  = request.get_json(silent=True) or {}
     name  = (data.get("name")  or "").strip()
     email = (data.get("email") or "").strip().lower()
     cats  = data.get("categories") or []
@@ -123,7 +119,7 @@ def delete_subscriber():
     if not email:
         return jsonify({"error": "Email required"}), 400
 
-    ws = sh.worksheet("Prenumeranter")
+    ws     = sh.worksheet("Prenumeranter")
     lowers = [e.lower() for e in ws.col_values(2)]
     rows   = [i + 1 for i, e in enumerate(lowers) if e == email]
     if not rows:
@@ -134,13 +130,14 @@ def delete_subscriber():
 
     return jsonify({"deleted_rows": len(rows)})
 
-# 7. Webhook som GitHub-Actions kallar ----------------------------
+# 7. /admin/run-fetch  (körs i bakgrund) --------------------------
 @app.route("/admin/run-fetch", methods=["POST"])
 @admin_required
 def run_fetch():
-    fetch_and_summarize = import_module("rss_ai").fetch_and_summarize
-    fetch_and_summarize()
-    return jsonify({"ok": True})
+    def job():
+        import_module("rss_ai").fetch_and_summarize()
+    Thread(target=job, daemon=True).start()
+    return jsonify({"ok": True, "msg": "Job started"}), 202
 
 # Root ------------------------------------------------------------
 @app.route("/")
