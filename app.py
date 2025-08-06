@@ -9,13 +9,13 @@ from flask_cors import CORS
 import gspread
 from google.oauth2.service_account import Credentials
 
-from news_db import latest, init as db_init   # ← init-funktionen
+from news_db import latest, init as db_init   # SQLite-funktioner
 
-# ────────── Initiera DB vid varje cold-start ──────────
+# ---------- Initiera SQLite-tabell ----------
 db_init()
-print("[app] DB init klar")   # syns i Render-loggarna
+print("[app] DB init klar")
 
-# ────────── Google Sheets ──────────
+# ---------- Google Sheets ----------
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
@@ -27,13 +27,13 @@ ADMIN_TOKEN    = os.getenv("ADMIN_TOKEN")
 
 creds = Credentials.from_service_account_file(CREDS_PATH, scopes=SCOPES)
 gc    = gspread.authorize(creds)
-sh    = gc.open_by_key(SPREADSHEET_ID)        # tillgängligt för rss_ai
+sh    = gc.open_by_key(SPREADSHEET_ID)        # delas med rss_ai
 
-# ────────── Flask ──────────
+# ---------- Flask ----------
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 
-# ────────── Admin-dekorator ──────────
+# ---------- Admin-dekorator ----------
 def admin_required(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
@@ -42,18 +42,20 @@ def admin_required(fn):
         return fn(*args, **kwargs)
     return wrapper
 
-# 1. /api/settings -------------------------------------------------
+# ───────────────────────────── API-ENDPOINTS ─────────────────────────────
+
+# 1. Inställningar --------------------------------------------------------
 @app.route("/api/settings")
 def settings():
     ws = sh.worksheet("Inställningar")
     return jsonify(ws.get_all_records())
 
-# 2. /api/news -----------------------------------------------------
+# 2. Nyheter (senaste 20) -------------------------------------------------
 @app.route("/api/news")
 def news():
-    return jsonify(latest(20))               # 20 senaste
+    return jsonify(latest(20))
 
-# 3. /api/archive --------------------------------------------------
+# 3. Arkiv (SQLite, paginerat) -------------------------------------------
 @app.route("/api/archive")
 def archive():
     page = max(1, int(request.args.get("page", 1)))
@@ -62,7 +64,7 @@ def archive():
     cat_filter = unquote_plus(request.args.get("cat", "")).strip().lower()
     query      = unquote_plus(request.args.get("q",   "")).strip().lower()
 
-    articles = latest(2000)                  # buffert
+    articles = latest(2000)                    # buffert
 
     if cat_filter:
         articles = [a for a in articles if a["category"].lower() == cat_filter]
@@ -75,7 +77,16 @@ def archive():
     off = (page - 1) * per
     return jsonify(articles[off : off + per])
 
-# 4. /api/subscribe -----------------------------------------------
+# 3b. **Arkiv från Google-Sheet** ----------------------------------------
+@app.route("/api/archive-sheet")
+def archive_sheet():
+    try:
+        ws = sh.worksheet("Artiklar")
+    except gspread.WorksheetNotFound:
+        return jsonify([])          # ännu inget arkiv
+    return jsonify(ws.get_all_records())
+
+# 4. Prenumerera ----------------------------------------------------------
 EMAIL_RE = re.compile(r"^[^@]+@[^@]+\.[^@]+$")
 
 @app.route("/api/subscribe", methods=["POST"])
@@ -105,14 +116,14 @@ def subscribe():
         ws.append_row([name, email, cat_str])
         return jsonify({"created": True}), 201
 
-# 5. /api/subscribers ---------------------------------------------
+# 5. Lista prenumeranter --------------------------------------------------
 @app.route("/api/subscribers")
 @admin_required
 def subscribers():
     ws = sh.worksheet("Prenumeranter")
     return jsonify(ws.get_all_records())
 
-# 6. /api/delete-subscriber ---------------------------------------
+# 6. Radera prenumerant ---------------------------------------------------
 @app.route("/api/delete-subscriber", methods=["POST"])
 @admin_required
 def delete_subscriber():
@@ -131,7 +142,7 @@ def delete_subscriber():
 
     return jsonify({"deleted_rows": len(rows)})
 
-# 7. /admin/run-fetch  (körs i bakgrund) --------------------------
+# 7. Webhook – kör RSS+AI-jobb i bakgrund -------------------------------
 @app.route("/admin/run-fetch", methods=["POST"])
 @admin_required
 def run_fetch():
@@ -140,7 +151,7 @@ def run_fetch():
     Thread(target=job, daemon=True).start()
     return jsonify({"ok": True, "msg": "Job started"}), 202
 
-# Root ------------------------------------------------------------
+# Root -------------------------------------------------------------------
 @app.route("/")
 def index():
     return "AI-Nyheter API v1", 200
