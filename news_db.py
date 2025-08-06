@@ -12,6 +12,7 @@ def init():
             date     TEXT,
             summary  TEXT,
             category TEXT
+            paywall   INTEGER DEFAULT 0
         )""")
 
 @contextlib.contextmanager
