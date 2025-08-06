@@ -22,7 +22,7 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # ---------- Paywall-regler ----------
 PAYWALL_DOMAINS = {
-    "dn.se", "svd.se", "ft.com", "nytimes.com", "theguardian.com",
+    "dn.se", "svd.se", "ft.com", "nytimes.com", "theguardian.com", "kvalitetsmagasinet.se",
 }
 PAYWALL_HINTS = ("premium", "subscriber", "betalvägg", "paywall")
 
