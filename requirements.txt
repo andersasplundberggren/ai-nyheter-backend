@@ -4,5 +4,6 @@ gspread==6.2.1
 google-auth==2.30.0
 gunicorn==22.0.0
 feedparser==6.0.11
-openai==1.30.0        
+openai==1.30.0        # behåll 1.x
+httpx==0.25.2         # <– LÄGG TILL, kompatibel med OpenAI
 python-dateutil
