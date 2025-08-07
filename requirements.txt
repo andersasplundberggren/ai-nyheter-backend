@@ -7,3 +7,4 @@ feedparser==6.0.11
 openai==1.30.0        # behåll 1.x
 httpx==0.25.2         # <– LÄGG TILL, kompatibel med OpenAI
 python-dateutil
+mailjet_rest==1.3.4
