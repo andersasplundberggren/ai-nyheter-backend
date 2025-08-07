@@ -28,7 +28,7 @@ ADMIN_TOKEN    = os.getenv("ADMIN_TOKEN")
 
 creds = Credentials.from_service_account_file(CREDS_PATH, scopes=SCOPES)
 gc    = gspread.authorize(creds)
-sh    = gc.open_by_key(SPREADSHEET_ID)        # delas av flera moduler
+sh    = gc.open_by_key(SPREADSHEET_ID)
 
 # ────────── 2. Flask-app ──────────
 app = Flask(__name__)
@@ -53,7 +53,7 @@ def settings():
 
 @app.route("/api/news")
 def news():
-    return jsonify(latest(6))                 # startsidan: 6 senaste
+    return jsonify(latest(6))
 
 @app.route("/api/archive")
 def archive():
@@ -67,8 +67,7 @@ def archive():
     if cat:
         arts = [a for a in arts if a["category"].lower() == cat]
     if q:
-        arts = [a for a in arts
-                if q in a["title"].lower() or q in a["summary"].lower()]
+        arts = [a for a in arts if q in a["title"].lower() or q in a["summary"].lower()]
 
     off = (page - 1) * per
     return jsonify(arts[off:off + per])
@@ -80,7 +79,7 @@ def archive_sheet():
     except gspread.WorksheetNotFound:
         return jsonify([])
 
-# ---------- Prenumerationsflöde (dubbel opt-in) ----------
+# ---------- Prenumerationsflöde ----------
 
 EMAIL_RE = re.compile(r"^[^@]+@[^@]+\.[^@]+$")
 
@@ -103,8 +102,7 @@ def subscribe():
 
     ws   = sh.worksheet("Prenumeranter")
     rows = ws.get_all_records()
-    idx  = next((i + 2 for i, r in enumerate(rows)
-                 if r["E-post"].lower() == email), None)
+    idx  = next((i + 2 for i, r in enumerate(rows) if r["E-post"].lower() == email), None)
 
     if idx:
         ws.update(f"A{idx}:E{idx}", [[name, email, cat_str, "pending", token]])
@@ -172,39 +170,36 @@ def delete_subscriber():
         return jsonify({"error": "email"}), 400
 
     ws   = sh.worksheet("Prenumeranter")
-    rows = [i + 2 for i, r in enumerate(ws.get_all_records())
-            if r["E-post"].lower() == email]
+    rows = [i + 2 for i, r in enumerate(ws.get_all_records()) if r["E-post"].lower() == email]
     for r in reversed(rows):
         ws.delete_rows(r)
     return jsonify({"deleted": len(rows)})
 
-# --- starta RSS+AI-hämtning i bakgrund --------------------------
 @app.route("/admin/run-fetch", methods=["POST"])
 @admin_required
 def run_fetch():
-    Thread(target=lambda: import_module("rss_ai").fetch_and_summarize(),
-           daemon=True).start()
+    Thread(target=lambda: import_module("rss_ai").fetch_and_summarize(), daemon=True).start()
     return jsonify({"ok": True, "msg": "Fetch job started"}), 202
 
-# --- skicka digest (dagligt/vecko) ------------------------------
 @app.route("/admin/send-digest", methods=["POST"])
 @admin_required
 def send_digest_job():
-    dryrun = request.args.get("dryrun", "0") == "1"
-    force  = request.args.get("force",  "0") == "1"
+    dryrun  = request.args.get("dryrun", "0") == "1"
+    force   = request.args.get("force",  "0") == "1"
     test_to = request.args.get("to")  # valfri testsadress
 
-    def job() -> None:
-        from util_email import send_digest   # import här ⇒ ingen cirkel-import
-        subs = sh.worksheet("Prenumeranter").get_all_records()
-        arts = latest(6)                     # tag t.ex. senaste 6
-        send_digest(
-            subscribers=subs,
-            articles=arts,
-            dryrun=dryrun,
-            force=force,
-            test_to=test_to,
-        )
+    def job():
+        with app.app_context():  # Nyckeln för att lösa render_template-felet
+            from util_email import send_digest
+            subs = sh.worksheet("Prenumeranter").get_all_records()
+            arts = latest(6)
+            send_digest(
+                subscribers=subs,
+                articles=arts,
+                dryrun=dryrun,
+                force=force,
+                test_to=test_to,
+            )
 
     Thread(target=job, daemon=True).start()
     return jsonify({
@@ -215,11 +210,9 @@ def send_digest_job():
         "test_to": test_to or ""
     }), 202
 
-# ────────── Ping / root ──────────
 @app.route("/")
 def index():
     return "AI-Nyheter API v2.3", 200
-
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
