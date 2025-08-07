@@ -1,44 +1,29 @@
-<!-- templates/digest.html -->
 <!DOCTYPE html>
-<html lang="sv">
+<html>
 <head>
-<meta charset="utf-8" />
-<title>AI-Nyheter – Nyhetsbrev</title>
-
-<!-- *** All CSS inline så mejlklienter klarar det *** -->
-<style>
-  body{margin:0;font-family:Arial,Helvetica,sans-serif;background:#f4f4f4;color:#222;}
-  .wrapper{max-width:600px;margin:0 auto;padding:24px;}
-  .card{background:#fff;border-radius:8px;padding:16px;margin-bottom:20px;}
-  h1{font-size:24px;margin:0 0 24px;}
-  h2{font-size:18px;margin:12px 0 4px;}
-  .cat{display:inline-block;font-size:12px;background:#6366f1;color:#fff;
-       padding:2px 8px;border-radius:4px;margin-bottom:4px;}
-  .meta{font-size:12px;color:#666;}
-  .footer{font-size:12px;color:#666;margin-top:32px;text-align:center;}
-  a{color:#6366f1;text-decoration:none;}
-</style>
+  <meta charset="UTF-8">
+  <title>AI-Nyheter – Dagens sammanfattning</title>
 </head>
-<body>
-  <div class="wrapper">
-    <h1>AI-Nyheter – Sammanfattning {{ date }}</h1>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; padding: 20px;">
+  <h2>Dagens AI-Nyheter – {{ date }}</h2>
 
-    {% for art in articles %}
-    <div class="card">
-      <span class="cat">{{ art.category }}</span>
-      <h2>
-        <a href="{{ art.url }}">{{ art.title }}</a>
-        {% if art.paywall %}🔒{% endif %}
-      </h2>
-      <p class="meta">{{ art.date }}</p>
-      <p>{{ art.summary }}</p>
-    </div>
-    {% endfor %}
+  {% if articles %}
+    <ul>
+      {% for article in articles %}
+        <li>
+          <strong>{{ article.title }}</strong><br>
+          <em>{{ article.category }}</em><br>
+          {{ article.summary }}
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p>Inga artiklar idag.</p>
+  {% endif %}
 
-    <div class="footer">
-      Du får detta brev eftersom du prenumererar på AI-Nyheter.<br>
-      <a href="{{ unsubscribe_link }}">Avsluta eller ändra prenumeration</a>
-    </div>
-  </div>
+  <p style="margin-top: 40px; font-size: 0.9em;">
+    Du får detta mejl eftersom du prenumererar på AI-Nyheter.<br>
+    <a href="{{ unsubscribe_link }}">Avsluta prenumerationen</a>
+  </p>
 </body>
 </html>
