@@ -184,8 +184,8 @@ def run_fetch():
 @app.route("/admin/send-digest", methods=["POST"])
 @admin_required
 def send_digest_job():
-    dryrun  = request.args.get("dryrun", "0") == "1"
-    force   = request.args.get("force",  "0") == "1"
+    dryrun = request.args.get("dryrun", "").lower() in ["1", "true", "yes"]
+    force  = request.args.get("force",  "").lower() in ["1", "true", "yes"]
     test_to = request.args.get("to")  # valfri testsadress
 
     def job():
