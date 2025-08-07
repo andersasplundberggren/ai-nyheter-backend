@@ -45,9 +45,17 @@ def _send(subject: str, html: str, to_addr: str) -> bool:
             }
         ]
     }
+
     res = mj.send.create(data=data)
+
+    # 🧪 Extra loggning av ALLA försök
+    print("[email] Mailjet status:", res.status_code, file=sys.stderr)
+    try:
+        print("[email] Mailjet response:", res.json(), file=sys.stderr)
+    except Exception as e:
+        print("[email] Mailjet response parse error:", str(e), file=sys.stderr)
+
     if res.status_code != 200:
-        print("[email] Mailjet-fel:", res.status_code, res.json(), file=sys.stderr)
         return False
     return True
 
@@ -110,7 +118,7 @@ def send_digest(
 
     if subscribers is None:
         # Lazy-import för att undvika cirkelberoende
-        from app import sh  # noqa: WPS433  (import in function)
+        from app import sh  # noqa: WPS433
         subscribers = sh.worksheet("Prenumeranter").get_all_records()
 
     # ── 1. Loopa igenom prenumeranter ──
@@ -119,7 +127,6 @@ def send_digest(
         if sub.get("Status") != "active":
             continue
 
-        # vilka kategorier vill prenumeranten ha?
         if sub["Kategorier"] == "ALL" or not sub["Kategorier"].strip():
             wanted = None   # => alla kategorier
         else:
@@ -136,8 +143,6 @@ def send_digest(
             f"?email={sub['E-post']}&tok={sub['Token']}"
         )
 
-        # rendera HTML-brevet via Jinja (Flask behöver **inte** vara i app-context
-        # för `render_template` så länge filen finns i templates/)
         html_body = render_template(
             "digest.html",
             date=datetime.date.today().strftime("%Y-%m-%d"),
@@ -153,7 +158,7 @@ def send_digest(
         else:
             sent += 1
 
-        if test_to:      # testläge ⇒ skicka bara en kopia
+        if test_to:
             break
 
     print(f"[digest] {sent} brev {'skickade' if not dryrun else 'att skicka'}",
