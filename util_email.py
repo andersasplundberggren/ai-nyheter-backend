@@ -111,9 +111,12 @@ def send_digest(
     if articles is None:
         today = datetime.date.today().isoformat()
         articles = [a for a in latest(40) if a["date"] >= today]
+        if not articles:
+            print("[digest] Inga nya artiklar – visar senaste istället", file=sys.stderr)
+            articles = latest(6)
 
     if not articles and not force:
-        print("[digest] Inga nya artiklar – hoppar utskick", file=sys.stderr)
+        print("[digest] Inga artiklar att skicka", file=sys.stderr)
         return 0
 
     if subscribers is None:
@@ -132,11 +135,15 @@ def send_digest(
         else:
             wanted = [c.strip() for c in sub["Kategorier"].split(",")]
 
-        user_articles = [
-            a for a in articles if (wanted is None or a["category"] in wanted)
-        ]
-        if not user_articles and not force:
-            continue
+        # 👇 Visa alla artiklar i testläge, annars filtrera på kategorier
+        if test_to:
+            user_articles = articles
+        else:
+            user_articles = [
+                a for a in articles if (wanted is None or a["category"] in wanted)
+            ]
+            if not user_articles and not force:
+                continue
 
         unsub = (
             "https://ai-nyheter-backend.onrender.com/api/unsubscribe"
