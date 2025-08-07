@@ -12,18 +12,15 @@ from __future__ import annotations
 import os, secrets, datetime, sys
 import mailjet_rest
 from flask import render_template
-from app import sh  # för att hämta artiklar direkt från kalkylarket
 
-
-# ─── Mailjet-konfiguration ───
+# ────────── Mailjet-konfiguration ──────────
 MJ_KEY    = os.getenv("MAILJET_API_KEY")
 MJ_SECRET = os.getenv("MAILJET_API_SECRET")
 SENDER    = os.getenv("SENDER_EMAIL", "nyheter@example.com")
 
 mj = mailjet_rest.Client(auth=(MJ_KEY, MJ_SECRET), version="v3.1")
 
-
-# ─── Hjälp ───
+# ────────── Små hjälpare ──────────
 def gen_token(n: int = 24) -> str:
     return secrets.token_urlsafe(n)
 
@@ -52,7 +49,7 @@ def _send(subject: str, html: str, to_addr: str) -> bool:
 
     return res.status_code == 200
 
-
+# ────────── 1. Bekräftelse-mejl ──────────
 def send_confirm(email: str, token: str) -> None:
     link = (
         "https://ai-nyheter-backend.onrender.com/api/confirm"
@@ -69,18 +66,19 @@ def send_confirm(email: str, token: str) -> None:
     """
     _send("Bekräfta din prenumeration på AI-Nyheter", html, email)
 
-
+# ────────── 2. Avslutsmejl ──────────
 def send_goodbye(email: str) -> None:
     html = "<p>Din prenumeration på AI-Nyheter är nu avslutad.</p>"
     _send("Prenumerationen avslutad – AI-Nyheter", html, email)
 
-
+# ────────── 3. Hämta artiklar från Google Sheet ──────────
 def get_articles_from_sheet(limit=40) -> list[dict]:
+    from app import sh  # lazy import för att undvika cirkulärt beroende
     rows = sh.worksheet("Artiklar").get_all_records()
     sorted_rows = sorted(rows, key=lambda r: r.get("Datum") or "", reverse=True)
     return sorted_rows[:limit]
 
-
+# ────────── 4. Dagligt/veckovis digest ──────────
 def send_digest(
     subscribers: list[dict] | None = None,
     articles:    list[dict] | None = None,
@@ -98,6 +96,7 @@ def send_digest(
         return 0
 
     if subscribers is None:
+        from app import sh
         subscribers = sh.worksheet("Prenumeranter").get_all_records()
 
     sent = 0
