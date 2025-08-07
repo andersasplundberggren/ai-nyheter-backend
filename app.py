@@ -1,92 +1,86 @@
-import os, re
+# app.py  – AI-Nyheter backend
+import os, re, sys
 from functools import wraps
 from importlib import import_module
 from threading import Thread
 from urllib.parse import unquote_plus
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, redirect
 from flask_cors import CORS
 import gspread
 from google.oauth2.service_account import Credentials
 
-from news_db import latest, init as db_init   # SQLite-funktioner
+from news_db   import latest, init as db_init
+from util_email import gen_token, send_confirm, send_goodbye
 
-# ---------- Initiera SQLite-tabell ----------
+# ────────── Init SQLite varje cold-start ──────────
 db_init()
-print("[app] DB init klar")
+print("[app] DB init klar", file=sys.stderr)
 
-# ---------- Google Sheets ----------
+# ────────── Google Sheets ──────────
 SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive",
+  "https://www.googleapis.com/auth/spreadsheets",
+  "https://www.googleapis.com/auth/drive",
 ]
-
 CREDS_PATH     = "/etc/secrets/service_account.json"
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
 ADMIN_TOKEN    = os.getenv("ADMIN_TOKEN")
 
 creds = Credentials.from_service_account_file(CREDS_PATH, scopes=SCOPES)
 gc    = gspread.authorize(creds)
-sh    = gc.open_by_key(SPREADSHEET_ID)        # delas med rss_ai
+sh    = gc.open_by_key(SPREADSHEET_ID)          # delas med rss_ai
 
-# ---------- Flask ----------
+# ────────── Flask ──────────
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 
-# ---------- Admin-dekorator ----------
+# ────────── Admin-header-skydd ──────────
 def admin_required(fn):
     @wraps(fn)
-    def wrapper(*args, **kwargs):
+    def wrapper(*a, **kw):
         if request.headers.get("X-Admin-Token") != ADMIN_TOKEN:
             return jsonify({"error": "Unauthorized"}), 401
-        return fn(*args, **kwargs)
+        return fn(*a, **kw)
     return wrapper
 
-# ───────────────────────────── API-ENDPOINTS ─────────────────────────────
-
-# 1. Inställningar --------------------------------------------------------
+# ────────────────────── 1. Inställningar ──────────────────────
 @app.route("/api/settings")
 def settings():
-    ws = sh.worksheet("Inställningar")
-    return jsonify(ws.get_all_records())
+    return jsonify(sh.worksheet("Inställningar").get_all_records())
 
-# 2. Nyheter (senaste 20) -------------------------------------------------
+# ────────────────────── 2. Senaste nyheter ────────────────────
 @app.route("/api/news")
 def news():
     return jsonify(latest(20))
 
-# 3. Arkiv (SQLite, paginerat) -------------------------------------------
+# ────────────────────── 3. Arkiv (SQLite) ─────────────────────
 @app.route("/api/archive")
 def archive():
     page = max(1, int(request.args.get("page", 1)))
     per  = max(5, int(request.args.get("per", 40)))
 
-    cat_filter = unquote_plus(request.args.get("cat", "")).strip().lower()
-    query      = unquote_plus(request.args.get("q",   "")).strip().lower()
+    cat = unquote_plus(request.args.get("cat", "")).lower()
+    q   = unquote_plus(request.args.get("q",   "")).lower()
 
-    articles = latest(2000)                    # buffert
+    arts = latest(2000)            # buffert
+    if cat:
+        arts = [a for a in arts if a["category"].lower() == cat]
+    if q:
+        arts = [a for a in arts if q in a["title"].lower() or q in a["summary"].lower()]
 
-    if cat_filter:
-        articles = [a for a in articles if a["category"].lower() == cat_filter]
-    if query:
-        articles = [
-            a for a in articles
-            if query in a["title"].lower() or query in a["summary"].lower()
-        ]
+    off = (page-1)*per
+    return jsonify(arts[off:off+per])
 
-    off = (page - 1) * per
-    return jsonify(articles[off : off + per])
-
-# 3b. **Arkiv från Google-Sheet** ----------------------------------------
+# ────────────────────── 3b. Arkiv från Google Sheet ───────────
 @app.route("/api/archive-sheet")
 def archive_sheet():
     try:
         ws = sh.worksheet("Artiklar")
+        return jsonify(ws.get_all_records())
     except gspread.WorksheetNotFound:
-        return jsonify([])          # ännu inget arkiv
-    return jsonify(ws.get_all_records())
+        return jsonify([])
 
-# 4. Prenumerera ----------------------------------------------------------
+# ────────────────────── 4. Prenumerera (dubbel opt-in) ────────
 EMAIL_RE = re.compile(r"^[^@]+@[^@]+\.[^@]+$")
 
 @app.route("/api/subscribe", methods=["POST"])
@@ -96,65 +90,98 @@ def subscribe():
     email = (data.get("email") or "").strip().lower()
     cats  = data.get("categories") or []
 
-    if not name:
-        return jsonify({"error": "Name is required"}), 400
-    if not EMAIL_RE.match(email):
-        return jsonify({"error": "Valid email required"}), 400
-    if not isinstance(cats, list):
-        return jsonify({"error": "Categories must be a list"}), 400
+    if not name:                      return jsonify({"error":"Name required"}),400
+    if not EMAIL_RE.match(email):     return jsonify({"error":"Invalid email"}),400
+    if not isinstance(cats, list):    return jsonify({"error":"Categories list"}),400
 
     cat_str = ",".join(cats) if cats else "ALL"
+    token   = gen_token()
+
+    ws      = sh.worksheet("Prenumeranter")
+    rows    = ws.get_all_records()
+    row_idx = next((i+2 for i,r in enumerate(rows) if r["E-post"].lower()==email), None)
+
+    if row_idx:   # uppdatera
+        ws.update(f"A{row_idx}:E{row_idx}", [[name,email,cat_str,"pending",token]])
+    else:         # ny rad
+        ws.append_row([name,email,cat_str,"pending",token])
+
+    send_confirm(email, token)
+    return jsonify({"msg":"Confirmation sent"}),202
+
+# ────────────────────── 5. Bekräftelse-länk ───────────────────
+@app.route("/api/confirm")
+def confirm():
+    email = request.args.get("email","").lower()
+    tok   = request.args.get("tok","")
+    ws    = sh.worksheet("Prenumeranter")
+
+    for i,r in enumerate(ws.get_all_records(), start=2):
+        if r["E-post"].lower()==email and r["Token"]==tok:
+            ws.update(f"D{i}", "active")
+            return "Prenumerationen är nu aktiverad ✅", 200
+    return "Ogiltig eller förbrukad länk.", 400
+
+# ────────────────────── 6. Avsluta ­───────────────────────────
+@app.route("/api/unsubscribe")
+def unsubscribe():
+    email = request.args.get("email","").lower()
+    tok   = request.args.get("tok","")
+    ws    = sh.worksheet("Prenumeranter")
+
+    for i,r in enumerate(ws.get_all_records(), start=2):
+        if r["E-post"].lower()==email and r["Token"]==tok:
+            ws.update(f"D{i}", "unsub")
+            send_goodbye(email)
+            return "Prenumerationen avslutad.", 200
+    return "Ogiltig länk.", 400
+
+# ────────────────────── 7. Ändra kategorier ───────────────────
+@app.route("/api/update-cats", methods=["POST"])
+def update_cats():
+    data  = request.get_json() or {}
+    email = data.get("email","").lower()
+    tok   = data.get("tok","")
+    cats  = data.get("cats",[])
+    if not isinstance(cats,list): return "cats ska vara lista",400
 
     ws = sh.worksheet("Prenumeranter")
-    emails_lower = [e.lower() for e in ws.col_values(2)]
+    for i,r in enumerate(ws.get_all_records(), start=2):
+        if r["E-post"].lower()==email and r["Token"]==tok:
+            ws.update(f"C{i}", ",".join(cats) if cats else "ALL")
+            return "",204
+    return "Fel token", 400
 
-    try:
-        row = emails_lower.index(email) + 1
-        ws.update(f"A{row}:C{row}", [[name, email, cat_str]])
-        return jsonify({"updated": True})
-    except ValueError:
-        ws.append_row([name, email, cat_str])
-        return jsonify({"created": True}), 201
-
-# 5. Lista prenumeranter --------------------------------------------------
+# ────────────────────── 8. Lista prenumeranter (admin) ────────
 @app.route("/api/subscribers")
 @admin_required
 def subscribers():
-    ws = sh.worksheet("Prenumeranter")
-    return jsonify(ws.get_all_records())
+    return jsonify(sh.worksheet("Prenumeranter").get_all_records())
 
-# 6. Radera prenumerant ---------------------------------------------------
+# ────────────────────── 9. Ta bort prenumerant (admin) ────────
 @app.route("/api/delete-subscriber", methods=["POST"])
 @admin_required
 def delete_subscriber():
-    email = (request.get_json(silent=True) or {}).get("email", "").lower().strip()
-    if not email:
-        return jsonify({"error": "Email required"}), 400
+    email = (request.get_json(silent=True) or {}).get("email","").lower()
+    if not email: return jsonify({"error":"email"}),400
 
-    ws     = sh.worksheet("Prenumeranter")
-    lowers = [e.lower() for e in ws.col_values(2)]
-    rows   = [i + 1 for i, e in enumerate(lowers) if e == email]
-    if not rows:
-        return jsonify({"error": "Email not found"}), 404
+    ws   = sh.worksheet("Prenumeranter")
+    rows = [i+2 for i,r in enumerate(ws.get_all_records()) if r["E-post"].lower()==email]
+    for r in reversed(rows): ws.delete_rows(r)
+    return jsonify({"deleted":len(rows)})
 
-    for r in reversed(rows):
-        ws.delete_rows(r)
-
-    return jsonify({"deleted_rows": len(rows)})
-
-# 7. Webhook – kör RSS+AI-jobb i bakgrund -------------------------------
+# ────────────────────── 10. Kör RSS+AI-jobb (admin) ───────────
 @app.route("/admin/run-fetch", methods=["POST"])
 @admin_required
 def run_fetch():
-    def job():
-        import_module("rss_ai").fetch_and_summarize()
-    Thread(target=job, daemon=True).start()
-    return jsonify({"ok": True, "msg": "Job started"}), 202
+    Thread(target=lambda: import_module("rss_ai").fetch_and_summarize(),
+           daemon=True).start()
+    return jsonify({"ok":True,"msg":"Job started"}),202
 
-# Root -------------------------------------------------------------------
+# ────────────────────── Root ──────────────────────────────────
 @app.route("/")
 def index():
-    return "AI-Nyheter API v1", 200
+    return "AI-Nyheter API v2", 200
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
