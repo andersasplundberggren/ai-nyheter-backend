@@ -4,16 +4,17 @@
   <meta charset="UTF-8">
   <title>AI-Nyheter – Dagens sammanfattning</title>
 </head>
-<body style="font-family: Arial, sans-serif; line-height: 1.6; padding: 20px;">
-  <h2>Dagens AI-Nyheter – {{ date }}</h2>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; padding: 20px; background-color: #f9f9f9; color: #222;">
+
+  <h2 style="color: #111;">📰 Dagens AI-Nyheter – {{ date }}</h2>
 
   {% if articles %}
-    <ul>
+    <ul style="padding-left: 0; list-style: none;">
       {% for article in articles %}
-        <li>
-          <strong>{{ article.title }}</strong><br>
-          <em>{{ article.category }}</em><br>
-          {{ article.summary }}
+        <li style="margin-bottom: 20px; padding: 15px; background: #fff; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+          <strong style="font-size: 16px;">{{ article.title }}</strong><br>
+          <em style="color: #6366f1;">Kategori: {{ article.category }}</em><br>
+          <p style="margin-top: 8px;">{{ article.summary }}</p>
         </li>
       {% endfor %}
     </ul>
@@ -23,7 +24,9 @@
 
   <p style="margin-top: 40px; font-size: 0.9em;">
     Du får detta mejl eftersom du prenumererar på AI-Nyheter.<br>
-    <a href="{{ unsubscribe_link }}">Avsluta prenumerationen</a>
+    👉 <a href="https://andersasplundberggren.github.io/ai-nyheter-frontend/arkiv.html" style="color: #2563eb;">Gå till nyhetsarkivet</a><br>
+    ❌ <a href="{{ unsubscribe_link }}" style="color: #ef4444;">Avsluta prenumerationen</a>
   </p>
+
 </body>
 </html>
