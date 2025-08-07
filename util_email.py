@@ -9,14 +9,13 @@ E-post-hjälp för AI-Nyheter
 """
 
 from __future__ import annotations
-import os, secrets, datetime, sys, typing as _t
-
+import os, secrets, datetime, sys
 import mailjet_rest
 from flask import render_template
-from news_db import latest
+from app import sh  # för att hämta artiklar direkt från kalkylarket
 
 
-# ────────── Mailjet-konfiguration ──────────
+# ─── Mailjet-konfiguration ───
 MJ_KEY    = os.getenv("MAILJET_API_KEY")
 MJ_SECRET = os.getenv("MAILJET_API_SECRET")
 SENDER    = os.getenv("SENDER_EMAIL", "nyheter@example.com")
@@ -24,13 +23,11 @@ SENDER    = os.getenv("SENDER_EMAIL", "nyheter@example.com")
 mj = mailjet_rest.Client(auth=(MJ_KEY, MJ_SECRET), version="v3.1")
 
 
-# ────────── Små hjälpare ──────────
+# ─── Hjälp ───
 def gen_token(n: int = 24) -> str:
     return secrets.token_urlsafe(n)
 
-
 def _send(subject: str, html: str, to_addr: str) -> bool:
-    """Enkel wrapper runt Mailjet-API:t (HTML-mejl)."""
     if not (MJ_KEY and MJ_SECRET):
         print("[email] Mailjet-nycklar saknas – inget skickat", file=sys.stderr)
         return False
@@ -47,20 +44,15 @@ def _send(subject: str, html: str, to_addr: str) -> bool:
     }
 
     res = mj.send.create(data=data)
-
-    # 🧪 Extra loggning av ALLA försök
     print("[email] Mailjet status:", res.status_code, file=sys.stderr)
     try:
         print("[email] Mailjet response:", res.json(), file=sys.stderr)
     except Exception as e:
         print("[email] Mailjet response parse error:", str(e), file=sys.stderr)
 
-    if res.status_code != 200:
-        return False
-    return True
+    return res.status_code == 200
 
 
-# ────────── 1. Bekräftelse-mejl ──────────
 def send_confirm(email: str, token: str) -> None:
     link = (
         "https://ai-nyheter-backend.onrender.com/api/confirm"
@@ -78,13 +70,17 @@ def send_confirm(email: str, token: str) -> None:
     _send("Bekräfta din prenumeration på AI-Nyheter", html, email)
 
 
-# ────────── 2. Avslutsmejl ──────────
 def send_goodbye(email: str) -> None:
     html = "<p>Din prenumeration på AI-Nyheter är nu avslutad.</p>"
     _send("Prenumerationen avslutad – AI-Nyheter", html, email)
 
 
-# ────────── 3. Dagligt/veckovis digest ──────────
+def get_articles_from_sheet(limit=40) -> list[dict]:
+    rows = sh.worksheet("Artiklar").get_all_records()
+    sorted_rows = sorted(rows, key=lambda r: r.get("Datum") or "", reverse=True)
+    return sorted_rows[:limit]
+
+
 def send_digest(
     subscribers: list[dict] | None = None,
     articles:    list[dict] | None = None,
@@ -93,55 +89,33 @@ def send_digest(
     dryrun: bool = False,
     force:  bool = False,
 ) -> int:
-    """
-    Skicka nyhetsbrev.
-
-    • `subscribers` – lista från Google-Sheet‐fliken **Prenumeranter**
-                      (om `None` hämtas den internt).
-    • `articles`    – lista med artikeldikter (`latest()`-format).
-                      (om `None` hämtas senaste 40 & filtreras på dagens datum)
-    • `test_to`     – e-postadress att skicka EN kopia till (dry-run).
-    • `dryrun`      – räkna bara hur många som skulle få brev.
-    • `force`       – skicka även om `articles` är tom.
-
-    Returnerar antalet (skickade eller “skulle skickas”).
-    """
-
-    # ── 0. Hämta data internt om det inte skickats in ──
     if articles is None:
-        today = datetime.date.today().isoformat()
-        articles = [a for a in latest(40) if a["date"] >= today]
-        if not articles:
-            print("[digest] Inga nya artiklar – visar senaste istället", file=sys.stderr)
-            articles = latest(6)
+        articles = get_articles_from_sheet(limit=40)
+        print(f"[digest] {len(articles)} artiklar hämtade från sheet", file=sys.stderr)
 
     if not articles and not force:
         print("[digest] Inga artiklar att skicka", file=sys.stderr)
         return 0
 
     if subscribers is None:
-        # Lazy-import för att undvika cirkelberoende
-        from app import sh  # noqa: WPS433
         subscribers = sh.worksheet("Prenumeranter").get_all_records()
 
-    # ── 1. Loopa igenom prenumeranter ──
     sent = 0
     for sub in subscribers:
         if sub.get("Status") != "active":
             continue
 
         if sub["Kategorier"] == "ALL" or not sub["Kategorier"].strip():
-            wanted = None   # => alla kategorier
+            wanted = None
         else:
             wanted = [c.strip() for c in sub["Kategorier"].split(",")]
 
-        # 👇 Visa alla artiklar i testläge, annars filtrera på kategorier
         if test_to:
-            user_articles = articles
+            user_articles = articles[:6]
         else:
             user_articles = [
-                a for a in articles if (wanted is None or a["category"] in wanted)
-            ]
+                a for a in articles if (wanted is None or a["Kategori"] in wanted)
+            ][:6]
             if not user_articles and not force:
                 continue
 
@@ -153,7 +127,7 @@ def send_digest(
         html_body = render_template(
             "digest.html",
             date=datetime.date.today().strftime("%Y-%m-%d"),
-            articles=user_articles,
+            articles=user_articles or [],
             unsubscribe_link=unsub,
         )
 
@@ -168,6 +142,5 @@ def send_digest(
         if test_to:
             break
 
-    print(f"[digest] {sent} brev {'skickade' if not dryrun else 'att skicka'}",
-          file=sys.stderr)
+    print(f"[digest] {sent} brev {'skickade' if not dryrun else 'att skicka'}", file=sys.stderr)
     return sent
