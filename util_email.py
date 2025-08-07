@@ -10,7 +10,7 @@ Hanterar e-post för AI-Nyheter
 import os, secrets, datetime, sys
 import mailjet_rest
 from flask import render_template
-from app import app, sh   # återanvänder Flask-app & Google-Sheet-objekt
+# from app import app, sh   # återanvänder Flask-app & Google-Sheet-objekt
 from news_db import latest
 
 # ────────── Konstanta miljö-variabler ──────────
