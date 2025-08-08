@@ -14,6 +14,8 @@ import os, secrets, datetime, sys, typing as _t
 import mailjet_rest
 from flask import render_template
 
+from news_db import latest_filtered
+
 # ────────── Mailjet-konfiguration ──────────
 MJ_KEY    = os.getenv("MAILJET_API_KEY")
 MJ_SECRET = os.getenv("MAILJET_API_SECRET")
@@ -87,26 +89,23 @@ def send_digest(
     test_to: str | None = None,
     dryrun: bool = False,
     force:  bool = False,
+    days: int = 1,
+    max_articles: int = 20,
 ) -> int:
     """
     Skicka nyhetsbrev till prenumeranter.
     """
-    # Hämta Google Sheet-klient + artiklar direkt
     from app import sh
-    all_articles = sh.worksheet("Artiklar").get_all_records()
 
-    # Om inga artiklar har dagens datum – använd de 6 senaste
-    today = datetime.date.today().isoformat()
-    articles_today = [a for a in all_articles if a["date"] >= today]
-    if not articles_today:
-        print("[digest] Inga nya artiklar – visar senaste istället", file=sys.stderr)
-        articles = all_articles[-6:] if len(all_articles) >= 6 else all_articles
-    else:
-        articles = articles_today
+    articles = latest_filtered(days=days, max_articles=max_articles)
 
     if not articles and not force:
         print("[digest] Inga artiklar att skicka", file=sys.stderr)
         return 0
+
+    if not articles:
+        print("[digest] Inga nya artiklar – visar senaste istället", file=sys.stderr)
+        articles = sh.worksheet("Artiklar").get_all_records()[-6:]
 
     if subscribers is None:
         subscribers = sh.worksheet("Prenumeranter").get_all_records()
