@@ -97,7 +97,6 @@ def admin_remove_duplicates():
     Thread(target=job, daemon=True).start()
     return redirect("/admin/panel")
 
-
 @app.route("/admin/panel/trigger-action", methods=["POST"])
 @admin_required_route
 def trigger_github_action():
@@ -123,5 +122,13 @@ def trigger_github_action():
     print("[admin] Triggerade action:", r.status_code, file=sys.stderr)
     return redirect("/admin/panel")
 
+# ────────── Publika API-endpoints ──────────
+@app.route("/api/all")
+def api_all():
+    return jsonify(latest(1000))  # returnera upp till 1000 artiklar
+
+# (OBS: ev. fler publika endpoints som /subscribe eller /settings bör också finnas)
+
+# ────────── Kör appen ──────────
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
