@@ -1,11 +1,11 @@
-# app.py – AI-Nyheter backend v2.3
+# app.py – AI-Nyheter backend v2.4 (med webbaserad admin-login)
 import os, re, sys
 from functools import wraps
 from importlib import import_module
 from threading import Thread
 from urllib.parse import unquote_plus
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, session, render_template, redirect, url_for
 from flask_cors import CORS
 import gspread
 from google.oauth2.service_account import Credentials
@@ -25,6 +25,7 @@ SCOPES = [
 CREDS_PATH     = "/etc/secrets/service_account.json"
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
 ADMIN_TOKEN    = os.getenv("ADMIN_TOKEN")
+ADMIN_PASS     = os.getenv("ADMIN_PASSWORD", "test123")
 
 creds = Credentials.from_service_account_file(CREDS_PATH, scopes=SCOPES)
 gc    = gspread.authorize(creds)
@@ -32,15 +33,16 @@ sh    = gc.open_by_key(SPREADSHEET_ID)
 
 # ────────── 2. Flask-app ──────────
 app = Flask(__name__)
+app.secret_key = os.getenv("SECRET_KEY", "hemligt")
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 
-# ────────── 3. Enkel admin-header ──────────
+# ────────── 3. Enkel admin-session ──────────
 def admin_required(fn):
     @wraps(fn)
     def wrapper(*a, **kw):
-        if request.headers.get("X-Admin-Token") != ADMIN_TOKEN:
-            return jsonify({"error": "Unauthorized"}), 401
-        return fn(*a, **kw)
+        if session.get("admin_logged_in"):
+            return fn(*a, **kw)
+        return redirect("/admin/login")
     return wrapper
 
 # ───────────────────────────────────────────────────────
@@ -153,64 +155,63 @@ def update_cats():
             return "", 204
     return "Fel token", 400
 
-# ───────────────────────────────────────────────────────
-#                A D M I N   E N D P O I N T S
-# ───────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
+#                A D M I N - LOGIN
+# ─────────────────────────────────────────────
 
-@app.route("/api/subscribers")
+@app.route("/admin/login", methods=["GET", "POST"])
+def admin_login():
+    if request.method == "POST":
+        password = request.form.get("password", "")
+        if password == ADMIN_PASS:
+            session["admin_logged_in"] = True
+            return redirect("/admin/panel")
+        return "Fel lösenord", 403
+    return '''
+    <form method="post">
+      <input type="password" name="password" placeholder="Adminlösenord">
+      <button type="submit">Logga in</button>
+    </form>
+    '''
+
+@app.route("/admin/logout")
+def admin_logout():
+    session.pop("admin_logged_in", None)
+    return redirect("/")
+
+# ─────────────────────────────────────────────
+#                A D M I N - PANEL
+# ─────────────────────────────────────────────
+
+@app.route("/admin/panel")
 @admin_required
-def subscribers():
-    return jsonify(sh.worksheet("Prenumeranter").get_all_records())
+def admin_panel():
+    subs = sh.worksheet("Prenumeranter").get_all_records()
+    arts = sh.worksheet("Artiklar").get_all_records()
+    active_subs = [s for s in subs if s.get("Status") == "active"]
+    return render_template("admin.html", subs=len(active_subs), arts=len(arts))
 
-@app.route("/api/delete-subscriber", methods=["POST"])
+@app.route("/admin/panel/send-digest", methods=["POST"])
 @admin_required
-def delete_subscriber():
-    email = (request.get_json(silent=True) or {}).get("email", "").lower()
-    if not email:
-        return jsonify({"error": "email"}), 400
+def admin_send_digest():
+    from util_email import send_digest
 
-    ws   = sh.worksheet("Prenumeranter")
-    rows = [i + 2 for i, r in enumerate(ws.get_all_records()) if r["E-post"].lower() == email]
-    for r in reversed(rows):
-        ws.delete_rows(r)
-    return jsonify({"deleted": len(rows)})
+    days = int(request.form.get("days", 1))
+    max_articles = int(request.form.get("max_articles", 6))
 
-@app.route("/admin/run-fetch", methods=["POST"])
+    Thread(target=lambda: send_digest(days=days, max_articles=max_articles), daemon=True).start()
+
+    return redirect("/admin/panel")
+
+@app.route("/admin/panel/fetch", methods=["POST"])
 @admin_required
-def run_fetch():
+def admin_fetch_rss():
     Thread(target=lambda: import_module("rss_ai").fetch_and_summarize(), daemon=True).start()
-    return jsonify({"ok": True, "msg": "Fetch job started"}), 202
-
-@app.route("/admin/send-digest", methods=["POST"])
-@admin_required
-def send_digest_job():
-    dryrun = request.args.get("dryrun", "").lower() in ["1", "true", "yes"]
-    force  = request.args.get("force",  "").lower() in ["1", "true", "yes"]
-    test_to = request.args.get("to")
-
-    def job():
-        with app.app_context():
-            from util_email import send_digest
-            subs = sh.worksheet("Prenumeranter").get_all_records()
-            send_digest(
-                subscribers=subs,
-                dryrun=dryrun,
-                force=force,
-                test_to=test_to,
-            )
-
-    Thread(target=job, daemon=True).start()
-    return jsonify({
-        "ok": True,
-        "msg": "Digest job started",
-        "dryrun": dryrun,
-        "force": force,
-        "test_to": test_to or ""
-    }), 202
+    return redirect("/admin/panel")
 
 @app.route("/")
 def index():
-    return "AI-Nyheter API v2.3", 200
+    return "AI-Nyheter API v2.4", 200
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
