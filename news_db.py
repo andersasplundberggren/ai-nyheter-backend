@@ -1,6 +1,6 @@
 # news_db.py
 import sqlite3, contextlib, pathlib, sys
-from datetime import datetime
+from datetime import datetime, timedelta
 
 DB_PATH = pathlib.Path("news.sqlite")
 
@@ -72,6 +72,24 @@ def latest(limit: int = 20) -> list[dict]:
             LIMIT ?
             """,
             (limit,),
+        )
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+def latest_filtered(days: int = 1, max_articles: int = 20) -> list[dict]:
+    """Returnerar max_articles artiklar importerade de senaste `days` dagarna."""
+    since_date = (datetime.utcnow() - timedelta(days=days)).date().isoformat()
+    with connect() as con:
+        cur = con.execute(
+            """
+            SELECT id, title, url, date, summary, category, paywall
+            FROM articles
+            WHERE import_date >= ?
+            ORDER BY import_date DESC
+            LIMIT ?
+            """,
+            (since_date, max_articles),
         )
         cols = [d[0] for d in cur.description]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
