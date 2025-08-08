@@ -8,22 +8,19 @@
 
   <h2 style="color: #111;">📰 Dagens AI-Nyheter – {{ date }}</h2>
 
-  {% if articles %}
-    {% if articles|length > 0 %}
-      <ul style="padding-left: 0; list-style: none;">
-        {% for article in articles %}
-          <li style="margin-bottom: 20px; padding: 15px; background: #fff; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
-            <strong style="font-size: 16px;">{{ article.title }}</strong><br>
-            <em style="color: #6366f1;">Kategori: {{ article.category }}</em><br>
-            <p style="margin-top: 8px;">{{ article.summary }}</p>
-          </li>
-        {% endfor %}
-      </ul>
-    {% else %}
-      <p><strong>⚠️ Artikellistan är tom trots att 'articles' är satt.</strong></p>
-    {% endif %}
+  {% if articles and articles|length > 0 %}
+    <ul style="padding-left: 0; list-style: none;">
+      {% for article in articles %}
+        <li style="margin-bottom: 20px; padding: 15px; background: #fff; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+          <strong style="font-size: 16px;">{{ article.title }}</strong><br>
+          <em style="color: #6366f1;">Kategori: {{ article.category }}</em><br>
+          <p style="margin-top: 8px;">{{ article.summary }}</p>
+        </li>
+      {% endfor %}
+    </ul>
   {% else %}
-    <p><strong>⚠️ Variabeln 'articles' är inte satt eller är None.</strong></p>
+    <p>Inga relevanta artiklar idag. Här är de senaste:</p>
+    <p>🧾 <a href="https://andersasplundberggren.github.io/ai-nyheter-frontend/arkiv.html" style="color: #2563eb;">Gå till nyhetsarkivet</a></p>
   {% endif %}
 
   <p style="margin-top: 40px; font-size: 0.9em;">
