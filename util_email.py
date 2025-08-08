@@ -26,6 +26,7 @@ mj = mailjet_rest.Client(auth=(MJ_KEY, MJ_SECRET), version="v3.1")
 def gen_token(n: int = 24) -> str:
     return secrets.token_urlsafe(n)
 
+
 def _send(subject: str, html: str, to_addr: str) -> bool:
     """Enkel wrapper runt Mailjet-API:t (HTML-mejl)."""
     if not (MJ_KEY and MJ_SECRET):
@@ -65,9 +66,9 @@ def send_confirm(email: str, token: str) -> None:
     <p>Hej!</p>
     <p>Tack för att du vill prenumerera på AI-Nyheter.
        Klicka på knappen nedan för att bekräfta din adress.</p>
-    <p><a href="{link}" style="
+    <p><a href=\"{link}\" style=\"
           background:#6366f1;color:#fff;padding:10px 18px;
-          text-decoration:none;border-radius:6px;">Bekräfta</a></p>
+          text-decoration:none;border-radius:6px;\">Bekräfta</a></p>
     <p>Ignorera mejlet om du inte har anmält dig.</p>
     """
     _send("Bekräfta din prenumeration på AI-Nyheter", html, email)
@@ -82,70 +83,47 @@ def send_goodbye(email: str) -> None:
 # ────────── 3. Dagligt/veckovis digest ──────────
 def send_digest(
     subscribers: list[dict] | None = None,
-    articles:    list[dict] | None = None,
     *,
     test_to: str | None = None,
     dryrun: bool = False,
     force:  bool = False,
 ) -> int:
     """
-    Skicka nyhetsbrev.
-
-    • `subscribers` – lista från Google-Sheet‐fliken **Prenumeranter**
-                      (om `None` hämtas den internt).
-    • `articles`    – lista med artikeldikter (`latest()`-format).
-                      (om `None` hämtas 6 senaste från Google Sheet)
-    • `test_to`     – e-postadress att skicka EN kopia till (dry-run).
-    • `dryrun`      – räkna bara hur många som skulle få brev.
-    • `force`       – skicka även om `articles` är tom.
-
-    Returnerar antalet (skickade eller “skulle skickas”).
+    Skicka nyhetsbrev till prenumeranter.
     """
+    # Hämta Google Sheet-klient + artiklar direkt
+    from app import sh
+    all_articles = sh.worksheet("Artiklar").get_all_records()
 
-    # ── 0. Hämta artiklar från kalkylarket vid behov ──
-    if articles is None:
-        try:
-            from app import sh  # lazy import för att undvika cirkelberoende
-            rows = sh.worksheet("Artiklar").get_all_records()
-            rows.sort(key=lambda x: x.get("date", ""), reverse=True)
-            articles = [
-                {
-                    "title": a.get("title", ""),
-                    "category": a.get("category", ""),
-                    "summary": a.get("summary", ""),
-                    "url": a.get("url", "")
-                }
-                for a in rows[:6]
-            ]
-        except Exception as e:
-            print("[digest] Fel vid hämtning av artiklar från Sheet:", e, file=sys.stderr)
-            articles = []
+    # Om inga artiklar har dagens datum – använd de 6 senaste
+    today = datetime.date.today().isoformat()
+    articles_today = [a for a in all_articles if a["date"] >= today]
+    if not articles_today:
+        print("[digest] Inga nya artiklar – visar senaste istället", file=sys.stderr)
+        articles = all_articles[-6:] if len(all_articles) >= 6 else all_articles
+    else:
+        articles = articles_today
 
     if not articles and not force:
         print("[digest] Inga artiklar att skicka", file=sys.stderr)
         return 0
 
     if subscribers is None:
-        from app import sh  # noqa: WPS433
         subscribers = sh.worksheet("Prenumeranter").get_all_records()
 
-    # ── 1. Loopa igenom prenumeranter ──
     sent = 0
     for sub in subscribers:
         if sub.get("Status") != "active":
             continue
 
-        if sub["Kategorier"] == "ALL" or not sub["Kategorier"].strip():
-            wanted = None
-        else:
+        wanted = None
+        if sub["Kategorier"] != "ALL" and sub["Kategorier"].strip():
             wanted = [c.strip() for c in sub["Kategorier"].split(",")]
 
-        user_articles = [
+        # Testläge => skicka alla artiklar
+        user_articles = articles if test_to else [
             a for a in articles if (wanted is None or a["category"] in wanted)
         ]
-
-        if not user_articles and not force:
-            continue
 
         unsub = (
             "https://ai-nyheter-backend.onrender.com/api/unsubscribe"
