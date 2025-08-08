@@ -32,17 +32,25 @@
     </form>
   </section>
 
-<form action="/admin/panel/trigger-action" method="POST">
-  <label for="workflow">GitHub Workflow-fil (t.ex. <code>fetch.yml</code>):</label><br>
-  <input type="text" name="workflow" value="fetch.yml" required>
-  <button type="submit">🔁 Kör GitHub Action</button>
-</form>
+  <section>
+    <h2>⚙️ Kör GitHub Action</h2>
+    <form action="/admin/panel/trigger-action" method="POST">
+      <label for="workflow">GitHub Workflow-fil (t.ex. <code>fetch.yml</code>):</label><br>
+      <input type="text" name="workflow" value="fetch.yml" required>
+      <button type="submit">🔁 Kör GitHub Action</button>
+    </form>
+  </section>
 
-  
   <section>
     <h2>📊 Statistik</h2>
     <p>{{ subs }} aktiva prenumeranter</p>
     <p>{{ arts }} artiklar totalt</p>
+  </section>
+
+  <section>
+    <form method="GET" action="/admin/logout">
+      <button type="submit">🚪 Logga ut</button>
+    </form>
   </section>
 </body>
 </html>
