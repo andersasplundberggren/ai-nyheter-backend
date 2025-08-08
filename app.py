@@ -3,17 +3,12 @@ import os, sys
 from functools import wraps
 from importlib import import_module
 from threading import Thread
-from flask_cors import CORS  # <-- viktigt!
+from urllib.parse import unquote_plus
 
 import gspread
 from google.oauth2.service_account import Credentials
 
-from news_db import latest, init as db_init
 from util_email import gen_token, send_confirm, send_goodbye
-
-# ────────── Init ──────────
-db_init()
-print("[app] SQLite init klar", file=sys.stderr)
 
 # ────────── Google Sheets ──────────
 SCOPES = [
@@ -31,7 +26,6 @@ sh = gc.open_by_key(SPREADSHEET_ID)
 # ────────── Flask ──────────
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "dev")
-CORS(app)  # <--- tillåt API-anrop från frontend
 
 # ────────── Helpers ──────────
 def admin_required_route(fn):
@@ -123,36 +117,32 @@ def trigger_github_action():
     print("[admin] Triggerade action:", r.status_code, file=sys.stderr)
     return redirect("/admin/panel")
 
-# ────────── Publika API-endpoints ──────────
-
-# → /api/all – alla artiklar
+# ────────── API-endpoints (direkt från Google Sheet) ──────────
 @app.route("/api/all")
 def api_all():
-    return jsonify(latest(1000))
+    arts = sh.worksheet("Artiklar").get_all_records()
+    return jsonify(arts)
 
-# → /api/settings – hämta kategorier
 @app.route("/api/settings")
 def api_settings():
-    ws = sh.worksheet("Inställningar")
-    rows = ws.get_all_records()
-    return jsonify(rows)
+    settings = sh.worksheet("Inställningar").get_all_records()
+    return jsonify(settings)
 
-# → /api/subscribe – spara ny prenumerant
 @app.route("/api/subscribe", methods=["POST"])
 def api_subscribe():
     data = request.get_json()
-    name  = data.get("name", "").strip()
-    email = data.get("email", "").strip()
-    cats  = data.get("categories", [])
+    name = data.get("name")
+    email = data.get("email")
+    categories = data.get("categories", [])
 
-    if not name or not email or not cats:
-        return jsonify({"error": "Namn, e-post och kategorier krävs"}), 400
+    if not name or not email or not categories:
+        return jsonify({"error": "Alla fält är obligatoriska"}), 400
 
-    ws = sh.worksheet("Prenumeranter")
-    ws.append_row([name, email, ", ".join(cats)])
-    send_confirm(email, name)
+    sheet = sh.worksheet("Prenumeranter")
+    sheet.append_row([name, email, ", ".join(categories)])
+    send_confirm(email)
     return jsonify({"ok": True})
 
-# ────────── Kör appen ──────────
+# ────────── Starta appen ──────────
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
