@@ -87,6 +87,17 @@ def admin_rss_fetch():
     Thread(target=lambda: import_module("rss_ai").fetch_and_summarize(), daemon=True).start()
     return redirect("/admin/panel")
 
+@app.route("/admin/panel/remove-dupes", methods=["POST"])
+@admin_required_route
+def admin_remove_duplicates():
+    def job():
+        from rss_ai import remove_duplicates_from_sheet
+        remove_duplicates_from_sheet()
+
+    Thread(target=job, daemon=True).start()
+    return redirect("/admin/panel")
+
+
 @app.route("/admin/panel/trigger-action", methods=["POST"])
 @admin_required_route
 def trigger_github_action():
