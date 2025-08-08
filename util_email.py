@@ -9,7 +9,8 @@ E-post-hjälp för AI-Nyheter
 """
 
 from __future__ import annotations
-import os, secrets, datetime, sys
+import os, secrets, datetime, sys, typing as _t
+
 import mailjet_rest
 from flask import render_template
 
@@ -20,11 +21,13 @@ SENDER    = os.getenv("SENDER_EMAIL", "nyheter@example.com")
 
 mj = mailjet_rest.Client(auth=(MJ_KEY, MJ_SECRET), version="v3.1")
 
+
 # ────────── Små hjälpare ──────────
 def gen_token(n: int = 24) -> str:
     return secrets.token_urlsafe(n)
 
 def _send(subject: str, html: str, to_addr: str) -> bool:
+    """Enkel wrapper runt Mailjet-API:t (HTML-mejl)."""
     if not (MJ_KEY and MJ_SECRET):
         print("[email] Mailjet-nycklar saknas – inget skickat", file=sys.stderr)
         return False
@@ -41,6 +44,8 @@ def _send(subject: str, html: str, to_addr: str) -> bool:
     }
 
     res = mj.send.create(data=data)
+
+    # 🧪 Extra loggning av ALLA försök
     print("[email] Mailjet status:", res.status_code, file=sys.stderr)
     try:
         print("[email] Mailjet response:", res.json(), file=sys.stderr)
@@ -48,6 +53,7 @@ def _send(subject: str, html: str, to_addr: str) -> bool:
         print("[email] Mailjet response parse error:", str(e), file=sys.stderr)
 
     return res.status_code == 200
+
 
 # ────────── 1. Bekräftelse-mejl ──────────
 def send_confirm(email: str, token: str) -> None:
@@ -66,19 +72,14 @@ def send_confirm(email: str, token: str) -> None:
     """
     _send("Bekräfta din prenumeration på AI-Nyheter", html, email)
 
+
 # ────────── 2. Avslutsmejl ──────────
 def send_goodbye(email: str) -> None:
     html = "<p>Din prenumeration på AI-Nyheter är nu avslutad.</p>"
     _send("Prenumerationen avslutad – AI-Nyheter", html, email)
 
-# ────────── 3. Hämta artiklar från Google Sheet ──────────
-def get_articles_from_sheet(limit=40) -> list[dict]:
-    from app import sh  # lazy import för att undvika cirkulärt beroende
-    rows = sh.worksheet("Artiklar").get_all_records()
-    sorted_rows = sorted(rows, key=lambda r: r.get("Datum") or "", reverse=True)
-    return sorted_rows[:limit]
 
-# ────────── 4. Dagligt/veckovis digest ──────────
+# ────────── 3. Dagligt/veckovis digest ──────────
 def send_digest(
     subscribers: list[dict] | None = None,
     articles:    list[dict] | None = None,
@@ -87,18 +88,48 @@ def send_digest(
     dryrun: bool = False,
     force:  bool = False,
 ) -> int:
+    """
+    Skicka nyhetsbrev.
+
+    • `subscribers` – lista från Google-Sheet‐fliken **Prenumeranter**
+                      (om `None` hämtas den internt).
+    • `articles`    – lista med artikeldikter (`latest()`-format).
+                      (om `None` hämtas 6 senaste från Google Sheet)
+    • `test_to`     – e-postadress att skicka EN kopia till (dry-run).
+    • `dryrun`      – räkna bara hur många som skulle få brev.
+    • `force`       – skicka även om `articles` är tom.
+
+    Returnerar antalet (skickade eller “skulle skickas”).
+    """
+
+    # ── 0. Hämta artiklar från kalkylarket vid behov ──
     if articles is None:
-        articles = get_articles_from_sheet(limit=40)
-        print(f"[digest] {len(articles)} artiklar hämtade från sheet", file=sys.stderr)
+        try:
+            from app import sh  # lazy import för att undvika cirkelberoende
+            rows = sh.worksheet("Artiklar").get_all_records()
+            rows.sort(key=lambda x: x.get("date", ""), reverse=True)
+            articles = [
+                {
+                    "title": a.get("title", ""),
+                    "category": a.get("category", ""),
+                    "summary": a.get("summary", ""),
+                    "url": a.get("url", "")
+                }
+                for a in rows[:6]
+            ]
+        except Exception as e:
+            print("[digest] Fel vid hämtning av artiklar från Sheet:", e, file=sys.stderr)
+            articles = []
 
     if not articles and not force:
         print("[digest] Inga artiklar att skicka", file=sys.stderr)
         return 0
 
     if subscribers is None:
-        from app import sh
+        from app import sh  # noqa: WPS433
         subscribers = sh.worksheet("Prenumeranter").get_all_records()
 
+    # ── 1. Loopa igenom prenumeranter ──
     sent = 0
     for sub in subscribers:
         if sub.get("Status") != "active":
@@ -109,14 +140,12 @@ def send_digest(
         else:
             wanted = [c.strip() for c in sub["Kategorier"].split(",")]
 
-        if test_to:
-            user_articles = articles[:6]
-        else:
-            user_articles = [
-                a for a in articles if (wanted is None or a["Kategori"] in wanted)
-            ][:6]
-            if not user_articles and not force:
-                continue
+        user_articles = [
+            a for a in articles if (wanted is None or a["category"] in wanted)
+        ]
+
+        if not user_articles and not force:
+            continue
 
         unsub = (
             "https://ai-nyheter-backend.onrender.com/api/unsubscribe"
@@ -126,7 +155,7 @@ def send_digest(
         html_body = render_template(
             "digest.html",
             date=datetime.date.today().strftime("%Y-%m-%d"),
-            articles=user_articles or [],
+            articles=user_articles,
             unsubscribe_link=unsub,
         )
 
@@ -141,5 +170,6 @@ def send_digest(
         if test_to:
             break
 
-    print(f"[digest] {sent} brev {'skickade' if not dryrun else 'att skicka'}", file=sys.stderr)
+    print(f"[digest] {sent} brev {'skickade' if not dryrun else 'att skicka'}",
+          file=sys.stderr)
     return sent
