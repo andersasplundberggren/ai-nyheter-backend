@@ -1,4 +1,3 @@
-# rss_ai.py
 import os, hashlib, time, html, re, sys
 from datetime import datetime
 from urllib.parse import urlparse
@@ -137,3 +136,43 @@ def fetch_and_summarize():
 
                 dbg(f"    + sparad: {title[:40]}{'...' if len(title) > 40 else ''}")
                 time.sleep(1)
+
+
+def remove_duplicates_from_sheet():
+    """Rensar bort dubbletter i Artiklar-fliken baserat på artikel-ID."""
+    from app import sh
+    import time
+
+    try:
+        ws = sh.worksheet("Artiklar")
+        rows = ws.get_all_values()
+        header = rows[0]
+        data = rows[1:]
+    except Exception as e:
+        print("[dup-rensning] Kunde inte läsa Sheet:", e, file=sys.stderr)
+        return
+
+    seen = set()
+    rows_to_delete = []
+
+    for idx, row in enumerate(data, start=2):  # börjar på rad 2
+        art_id = row[0]
+        if art_id in seen:
+            rows_to_delete.append(idx)
+        else:
+            seen.add(art_id)
+
+    if not rows_to_delete:
+        print("[dup-rensning] Inga dubbletter hittades", file=sys.stderr)
+        return
+
+    print(f"[dup-rensning] Hittade {len(rows_to_delete)} dubbletter – rensar...", file=sys.stderr)
+
+    for row_num in reversed(rows_to_delete):
+        try:
+            ws.delete_rows(row_num)
+            time.sleep(1)
+        except Exception as e:
+            print(f"[dup-rensning] Misslyckades att ta bort rad {row_num}: {e}", file=sys.stderr)
+
+    print("[dup-rensning] Klart.", file=sys.stderr)
