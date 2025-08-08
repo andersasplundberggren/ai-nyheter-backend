@@ -1,5 +1,6 @@
 # news_db.py
 import sqlite3, contextlib, pathlib, sys
+from datetime import datetime
 
 DB_PATH = pathlib.Path("news.sqlite")
 
@@ -10,18 +11,23 @@ def init() -> None:
         con.execute(
             """
             CREATE TABLE IF NOT EXISTS articles (
-              id        TEXT PRIMARY KEY,
-              title     TEXT,
-              url       TEXT,
-              date      TEXT,
-              summary   TEXT,
-              category  TEXT,
-              paywall   INTEGER DEFAULT 0
+              id          TEXT PRIMARY KEY,
+              title       TEXT,
+              url         TEXT UNIQUE,
+              date        TEXT,
+              summary     TEXT,
+              category    TEXT,
+              paywall     INTEGER DEFAULT 0,
+              import_date TEXT
             )
             """
         )
         try:
             con.execute("ALTER TABLE articles ADD COLUMN paywall INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            con.execute("ALTER TABLE articles ADD COLUMN import_date TEXT")
         except sqlite3.OperationalError:
             pass
 
@@ -43,19 +49,27 @@ def insert(row: tuple) -> None:
         con.execute(
             """
             INSERT OR IGNORE INTO articles
-            (id,title,url,date,summary,category,paywall)
-            VALUES (?,?,?,?,?,?,?)
+            (id, title, url, date, summary, category, paywall, import_date)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             row,
         )
+
+
+def exists(url: str) -> bool:
+    with connect() as con:
+        cur = con.execute("SELECT COUNT(*) FROM articles WHERE url = ?", (url,))
+        return cur.fetchone()[0] > 0
 
 
 def latest(limit: int = 20) -> list[dict]:
     with connect() as con:
         cur = con.execute(
             """
-            SELECT id,title,url,date,summary,category,paywall
-            FROM articles ORDER BY date DESC LIMIT ?
+            SELECT id, title, url, date, summary, category, paywall
+            FROM articles
+            ORDER BY import_date DESC
+            LIMIT ?
             """,
             (limit,),
         )
