@@ -186,16 +186,14 @@ def run_fetch():
 def send_digest_job():
     dryrun = request.args.get("dryrun", "").lower() in ["1", "true", "yes"]
     force  = request.args.get("force",  "").lower() in ["1", "true", "yes"]
-    test_to = request.args.get("to")  # valfri testsadress
+    test_to = request.args.get("to")
 
     def job():
-        with app.app_context():  # Nyckeln för att lösa render_template-felet
+        with app.app_context():
             from util_email import send_digest
             subs = sh.worksheet("Prenumeranter").get_all_records()
-            arts = latest(6)
             send_digest(
                 subscribers=subs,
-                articles=arts,
                 dryrun=dryrun,
                 force=force,
                 test_to=test_to,
