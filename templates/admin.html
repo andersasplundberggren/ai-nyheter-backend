@@ -2,67 +2,64 @@
 <html lang="sv">
 <head>
   <meta charset="UTF-8">
-  <title>AI-Nyheter – Adminpanel</title>
+  <title>Admin – AI-Nyheter</title>
   <style>
     body { font-family: sans-serif; padding: 2em; max-width: 700px; margin: auto; }
     h1 { color: #444; }
     section { margin-bottom: 2em; }
     button { margin-top: 0.5em; padding: 0.5em 1em; }
     input { padding: 0.4em; margin: 0.3em 0; width: 100%; }
+    .error { color: red; font-weight: bold; }
   </style>
 </head>
 <body>
   <h1>Adminpanel – AI-Nyheter</h1>
 
   {% if not authed %}
-    <section>
-      <h2>🔐 Logga in</h2>
-      <form method="POST" action="/admin/panel">
-        <label for="token">Adminlösenord:</label><br>
-        <input type="password" name="token" required><br>
-        <button type="submit">Logga in</button>
-      </form>
-    </section>
+    <form method="POST" action="/admin/panel">
+      <label for="token">Adminlösenord:</label><br>
+      <input type="password" name="token" required><br>
+      <button type="submit">Logga in</button>
+      {% if error %}
+        <p class="error">{{ error }}</p>
+      {% endif %}
+    </form>
   {% else %}
 
-  <section>
-    <h2>📰 Skicka nyhetsbrev</h2>
-    <form method="POST" action="/admin/panel/send-digest">
-      <label>Dagar bakåt:</label><br>
-      <input type="number" name="days" value="1" min="1" max="7"><br>
-      <label>Max artiklar:</label><br>
-      <input type="number" name="max_articles" value="6" min="1" max="50"><br>
-      <button type="submit">Skicka nu</button>
-    </form>
-  </section>
+    <section>
+      <h2>📰 Skicka nyhetsbrev</h2>
+      <form method="POST" action="/admin/panel/send-digest">
+        <label>Dagar bakåt:</label><br>
+        <input type="number" name="days" value="1" min="1" max="7"><br>
+        <label>Max artiklar:</label><br>
+        <input type="number" name="max_articles" value="6" min="1" max="50"><br>
+        <button type="submit">Skicka nu</button>
+      </form>
+    </section>
 
-  <section>
-    <h2>🔄 Hämta nya artiklar</h2>
-    <form method="POST" action="/admin/panel/fetch">
-      <button type="submit">Starta RSS-hämtning</button>
-    </form>
-  </section>
+    <section>
+      <h2>🔄 Hämta nya artiklar</h2>
+      <form method="POST" action="/admin/panel/fetch">
+        <button type="submit">Starta RSS-hämtning</button>
+      </form>
+    </section>
 
-  <section>
-    <h2>⚙️ Kör GitHub Action</h2>
-    <form action="/admin/panel/trigger-action" method="POST">
-      <label for="workflow">GitHub Workflow-fil (t.ex. <code>fetch.yml</code>):</label><br>
-      <input type="text" name="workflow" value="fetch.yml" required>
-      <button type="submit">🔁 Kör GitHub Action</button>
-    </form>
-  </section>
+    <section>
+      <h2>🤖 Kör GitHub Action</h2>
+      <form method="POST" action="/admin/panel/trigger-action">
+        <label for="workflow">Workflow-fil (t.ex. <code>fetch.yml</code>):</label><br>
+        <input type="text" name="workflow" value="fetch.yml" required>
+        <button type="submit">Kör Action</button>
+      </form>
+    </section>
 
-  <section>
-    <h2>📊 Statistik</h2>
-    <p>{{ subs }} aktiva prenumeranter</p>
-    <p>{{ arts }} artiklar totalt</p>
-  </section>
+    <section>
+      <h2>📊 Statistik</h2>
+      <p><strong>{{ subs }}</strong> aktiva prenumeranter</p>
+      <p><strong>{{ arts }}</strong> artiklar totalt</p>
+      <p><a href="/admin/logout">Logga ut</a></p>
+    </section>
 
-  <section>
-    <form method="GET" action="/admin/logout">
-      <button type="submit">🚪 Logga ut</button>
-    </form>
-  </section>
   {% endif %}
 </body>
 </html>
