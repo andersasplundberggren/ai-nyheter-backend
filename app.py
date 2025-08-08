@@ -1,9 +1,9 @@
 from flask import Flask, render_template, request, redirect, session, jsonify
-import os, re, sys
+import os, sys
 from functools import wraps
 from importlib import import_module
 from threading import Thread
-from urllib.parse import unquote_plus
+from flask_cors import CORS  # <-- viktigt!
 
 import gspread
 from google.oauth2.service_account import Credentials
@@ -31,6 +31,7 @@ sh = gc.open_by_key(SPREADSHEET_ID)
 # ────────── Flask ──────────
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "dev")
+CORS(app)  # <--- tillåt API-anrop från frontend
 
 # ────────── Helpers ──────────
 def admin_required_route(fn):
@@ -65,7 +66,7 @@ def admin_send_digest():
     from util_email import send_digest
     days = int(request.form.get("days", 1))
     max_articles = int(request.form.get("max_articles", 6))
-    
+
     def job():
         with app.app_context():
             subs = sh.worksheet("Prenumeranter").get_all_records()
@@ -123,11 +124,34 @@ def trigger_github_action():
     return redirect("/admin/panel")
 
 # ────────── Publika API-endpoints ──────────
+
+# → /api/all – alla artiklar
 @app.route("/api/all")
 def api_all():
-    return jsonify(latest(1000))  # returnera upp till 1000 artiklar
+    return jsonify(latest(1000))
 
-# (OBS: ev. fler publika endpoints som /subscribe eller /settings bör också finnas)
+# → /api/settings – hämta kategorier
+@app.route("/api/settings")
+def api_settings():
+    ws = sh.worksheet("Inställningar")
+    rows = ws.get_all_records()
+    return jsonify(rows)
+
+# → /api/subscribe – spara ny prenumerant
+@app.route("/api/subscribe", methods=["POST"])
+def api_subscribe():
+    data = request.get_json()
+    name  = data.get("name", "").strip()
+    email = data.get("email", "").strip()
+    cats  = data.get("categories", [])
+
+    if not name or not email or not cats:
+        return jsonify({"error": "Namn, e-post och kategorier krävs"}), 400
+
+    ws = sh.worksheet("Prenumeranter")
+    ws.append_row([name, email, ", ".join(cats)])
+    send_confirm(email, name)
+    return jsonify({"ok": True})
 
 # ────────── Kör appen ──────────
 if __name__ == "__main__":
