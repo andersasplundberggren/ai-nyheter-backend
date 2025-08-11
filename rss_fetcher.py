@@ -7,9 +7,7 @@ import feedparser
 import gspread
 from dateutil.parser import parse as dtparse
 from google.oauth2.service_account import Credentials
-
-# OpenAI (1.x)
-from openai import OpenAI
+from openai import OpenAI  # OpenAI 1.x
 
 # ──────────────────────────────────────────────────────────────
 # 0) Loggning
@@ -54,22 +52,38 @@ openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 # 3) Hjälpare
 # ──────────────────────────────────────────────────────────────
 def ensure_worksheets(sh):
-    """Skapa flikar om de saknas. Returnerar (ws_settings, ws_articles)."""
+    """Skapa flikar om de saknas och säkerställ headers.
+       Returnerar (ws_settings, ws_articles).
+    """
+    import gspread
+
+    # Inställningar
     try:
         ws_settings = sh.worksheet("Inställningar")
     except gspread.WorksheetNotFound:
-        ws_settings = sh.add_worksheet(title="Inställningar", rows=2, cols=2)
-        ws_settings.append_row(["Kategori", "Källa"])
-        log.info("Skapade fliken 'Inställningar' (lägg till rader innan körning).")
+        ws_settings = sh.add_worksheet(title="Inställningar", rows=2, cols=3)
+        ws_settings.append_row(["Kategori", "Källa", "Nyckelord"])
+        log.info("Skapade fliken 'Inställningar' – lägg till rader innan körning.")
 
+    # Artiklar
+    desired = ["id", "title", "url", "date", "summary", "category", "paywall", "import_date"]
     try:
         ws_articles = sh.worksheet("Artiklar")
+        header = ws_articles.row_values(1)
+        if not header:
+            ws_articles.update("A1:H1", [desired])
+            log.info("Skrev headers i tom flik 'Artiklar'.")
+        else:
+            # Lägg till import_date om den saknas
+            normalized = [h.strip().lower() for h in header]
+            if "import_date" not in normalized:
+                next_col = len(header) + 1
+                ws_articles.update_cell(1, next_col, "import_date")
+                log.info("La till saknad kolumn 'import_date' i 'Artiklar'.")
     except gspread.WorksheetNotFound:
         ws_articles = sh.add_worksheet(title="Artiklar", rows=1, cols=8)
-        ws_articles.append_row([
-            "id", "title", "url", "date", "summary", "category", "paywall", "import_date"
-        ])
-        log.info("Skapade fliken 'Artiklar'.")
+        ws_articles.append_row(desired)
+        log.info("Skapade fliken 'Artiklar' med headers.")
 
     return ws_settings, ws_articles
 
@@ -86,7 +100,7 @@ def normalize_feeds(raw):
     """Ta en cell med en eller flera URL:er och returnera lista."""
     if not raw:
         return []
-    parts = re.split(r"[\n,; ]+", str(raw).strip())
+    parts = re.split(r"[\n,;, \t]+", str(raw).strip())
     return [p.strip() for p in parts if p.strip().startswith("http")]
 
 def sha1_id(url: str) -> str:
@@ -164,19 +178,26 @@ def fetch_and_append() -> int:
             try:
                 parsed = feedparser.parse(feed_url)
             except Exception as e:
-                log.info(f"Fel vid parse av {feed_url}: {e}")
+                log.info(f"  Fel vid parse av {feed_url}: {e}")
                 continue
 
             log.info(f"  {feed_url} → {len(parsed.entries)} entries")
+            added_this_feed = 0
+
             for entry in parsed.entries[:MAX_ENTRIES_PER_FEED]:
                 url   = entry.get("link")
                 title = html.unescape(entry.get("title") or "").strip()
 
-                if not url or not title:
+                if not url:
+                    log.info("    - skip: saknar link")
+                    continue
+                if not title:
+                    log.info(f"    - skip: saknar title ({url})")
                     continue
 
                 _id = sha1_id(url)
                 if _id in existing_ids:
+                    log.info(f"    - dup: {title[:60]}{'...' if len(title)>60 else ''}")
                     continue  # dedupe
 
                 # datum
@@ -202,9 +223,12 @@ def fetch_and_append() -> int:
                     import_date,
                 ])
 
-                existing_ids.add(_id)  # undvik dubletter i samma körning
-                log.info(f"    + {title[:60]}{'...' if len(title)>60 else ''}")
+                existing_ids.add(_id)  # undvik dubbletter i samma körning
+                added_this_feed += 1
+                log.info(f"    + add: {title[:60]}{'...' if len(title)>60 else ''}")
                 time.sleep(SLEEP_BETWEEN_ITEMS)
+
+            log.info(f"  {feed_url} → klart, nya i denna feed: {added_this_feed} (totalt stacked: {len(new_rows)})")
 
     # Batch-append
     if new_rows:
