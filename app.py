@@ -1,5 +1,5 @@
 # app.py – AI-Nyheter (stabil grund, Sheet som källa)
-import os, sys
+import os, sys, json
 from functools import wraps
 from threading import Thread
 
@@ -15,27 +15,44 @@ except Exception:
     gen_token = send_confirm = send_goodbye = None
 
 # ────────── Konfiguration / miljö ──────────
+# Behåll fulla scopes (du skriver till arket i /api/subscribe)
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
 ]
+# Stöd både JSON i env och filväg (Render brukar köra JSON i env)
+CREDS_JSON     = os.getenv("GOOGLE_CREDS_JSON")  # (valfritt)
 CREDS_PATH     = os.getenv("GOOGLE_CREDS_PATH", "/etc/secrets/service_account.json")
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
 ADMIN_TOKEN    = os.getenv("ADMIN_TOKEN")  # används för header-skydd på /admin/run-fetch
+FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "https://andersasplundberggren.github.io")
 
 if not SPREADSHEET_ID:
     print("[app] VARNING: SPREADSHEET_ID saknas!", file=sys.stderr)
 
 # ────────── Google Sheets-klient ──────────
-creds = Credentials.from_service_account_file(CREDS_PATH, scopes=SCOPES)
-gc    = gspread.authorize(creds)
-sh    = gc.open_by_key(SPREADSHEET_ID)
+try:
+    if CREDS_JSON:
+        creds = Credentials.from_service_account_info(json.loads(CREDS_JSON), scopes=SCOPES)
+    else:
+        creds = Credentials.from_service_account_file(CREDS_PATH, scopes=SCOPES)
+    gc = gspread.authorize(creds)
+    sh = gc.open_by_key(SPREADSHEET_ID) if SPREADSHEET_ID else None
+except Exception as e:
+    print(f"[app] Fel vid init av Sheets-klient: {e}", file=sys.stderr)
+    sh = None
 
 # ────────── Flask-app ──────────
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "dev")
-# Öppna CORS för /api/* så GitHub Pages kan hämta
-CORS(app, resources={r"/api/*": {"origins": "*"}})
+
+# CORS
+# - /api/*: öppet (som tidigare)
+# - /public/*: låst till din GitHub Pages-domän (kan ändras via FRONTEND_ORIGIN)
+CORS(app, resources={
+    r"/api/*": {"origins": "*"},
+    r"/public/*": {"origins": FRONTEND_ORIGIN},
+})
 
 # ────────── Hjälpare ──────────
 def admin_required_route(fn):
@@ -45,6 +62,13 @@ def admin_required_route(fn):
             return redirect("/admin/panel")
         return fn(*a, **kw)
     return wrapper
+
+def _sheet_rows(tab_name: str):
+    """Hämta alla rader från en flik som lista av dicts."""
+    if not sh:
+        raise RuntimeError("Google Sheet ej initierat (saknar SPREADSHEET_ID eller creds).")
+    ws = sh.worksheet(tab_name)
+    return ws.get_all_records()  # [{col: val, ...}]
 
 # ────────── Adminpanel (enkel, valfri att använda) ──────────
 @app.route("/admin/panel", methods=["GET", "POST"])
@@ -59,12 +83,12 @@ def admin_panel():
     # Visa statistisk info (kräver ej inlogg för att se själva sidan – men knapparna kräver session)
     try:
         subs = sh.worksheet("Prenumeranter").get_all_records()
-    except gspread.WorksheetNotFound:
+    except Exception:
         subs = []
 
     try:
         arts = sh.worksheet("Artiklar").get_all_records()
-    except gspread.WorksheetNotFound:
+    except Exception:
         arts = []
 
     return render_template(
@@ -112,26 +136,64 @@ def run_fetch_now():
     Thread(target=job, daemon=True).start()
     return jsonify({"ok": True, "msg": "Fetch job started"}), 202
 
-# ────────── Publika API-endpoints (frontend hämtar härifrån ELLER direkt från Sheet) ──────────
+# ────────── Publika API-endpoints (befintliga) ──────────
 @app.route("/api/all")
 def api_all():
     """Returnerar alla artiklar (fliken 'Artiklar') som JSON."""
     try:
         arts = sh.worksheet("Artiklar").get_all_records()
-    except gspread.WorksheetNotFound:
+    except Exception:
         arts = []
     return jsonify(arts)
 
 @app.route("/api/settings")
 def api_settings():
-    """Returnerar kategorirader (fliken 'Inställningar') som JSON."""
+    """Returnerar rader från fliken 'Inställningar' som JSON."""
     try:
         settings = sh.worksheet("Inställningar").get_all_records()
-    except gspread.WorksheetNotFound:
+    except Exception:
         settings = []
     return jsonify(settings)
 
-# (Valfritt) Prenumeration – kan lämnas eller tas bort. Låter denna vara enkel/neutral.
+# ────────── NYTT: Läs-enda proxy för frontend (GitHub Pages) ──────────
+# Dessa används av din frontend för att slippa publicera arket på webben.
+@app.get("/public/sheet")
+def public_sheet():
+    """
+    Ex: /public/sheet?sheet=Artiklar  eller  /public/sheet?sheet=Kategorier
+    Returnerar list[dict].
+    """
+    tab = request.args.get("sheet", "").strip() or "Artiklar"
+    try:
+        rows = _sheet_rows(tab)
+        return jsonify(rows)
+    except gspread.WorksheetNotFound:
+        return jsonify({"error": f"Fliken '{tab}' kunde inte hittas."}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.get("/public/articles")
+def public_articles():
+    try:
+        return jsonify(_sheet_rows("Artiklar"))
+    except gspread.WorksheetNotFound:
+        return jsonify({"error": "Fliken 'Artiklar' saknas."}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.get("/public/categories")
+def public_categories():
+    # Stöd både 'Kategorier' (ny) och 'Inställningar' (gammal) som fallback
+    for tab in ("Kategorier", "Inställningar"):
+        try:
+            return jsonify(_sheet_rows(tab))
+        except gspread.WorksheetNotFound:
+            continue
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+    return jsonify([])
+
+# (Valfritt) Prenumeration – kan lämnas eller tas bort.
 @app.route("/api/subscribe", methods=["POST"])
 def api_subscribe():
     data = request.get_json(silent=True) or {}
@@ -149,15 +211,12 @@ def api_subscribe():
         ws = sh.add_worksheet(title="Prenumeranter", rows=1, cols=5)
         ws.append_row(["Namn", "E-post", "Kategorier", "Status", "Token"])
 
-    token  = gen_token(16) if gen_token else ""
-
-    # Skriv komplett rad (Status/Token för ev. framtida e-postflöde)
+    token = gen_token(16) if gen_token else ""
     ws.append_row([name, email, ", ".join(cats), "pending", token])
 
-    # (Valfritt) skicka bekräftelse om util_email finns & konfigurerad
     if send_confirm and token:
         try:
-            send_confirm(email, token)  # implementerad i din util_email
+            send_confirm(email, token)
         except Exception as e:
             print(f"[subscribe] Kunde inte skicka bekräftelse: {e}", file=sys.stderr)
 
