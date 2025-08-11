@@ -7,6 +7,8 @@ import feedparser
 import gspread
 from dateutil.parser import parse as dtparse
 from google.oauth2.service_account import Credentials
+
+# OpenAI (1.x)
 from openai import OpenAI
 
 # ──────────────────────────────────────────────────────────────
@@ -23,13 +25,12 @@ log.setLevel(logging.INFO)
 # ──────────────────────────────────────────────────────────────
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
 CREDS_PATH     = os.getenv("GOOGLE_CREDS_PATH", "/etc/secrets/service_account.json")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
-# Limiteringar
 MAX_ENTRIES_PER_FEED = int(os.getenv("MAX_ENTRIES_PER_FEED", "10"))
-SLEEP_BETWEEN_ITEMS  = float(os.getenv("SLEEP_BETWEEN_ITEMS", "0.4"))  # artig paus
+SLEEP_BETWEEN_ITEMS  = float(os.getenv("SLEEP_BETWEEN_ITEMS", "0.4"))
 
-# Paywall heuristik
+# Paywall-heuristik
 PAYWALL_DOMAINS = {
     "dn.se", "svd.se", "ft.com", "nytimes.com", "theguardian.com", "kvalitetsmagasinet.se",
 }
@@ -47,7 +48,7 @@ def get_sheet_client():
     gc    = gspread.authorize(creds)
     return gc.open_by_key(SPREADSHEET_ID)
 
-openai_client = OpenAI(api_key=OPENAI_API_KEY)
+openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 # ──────────────────────────────────────────────────────────────
 # 3) Hjälpare
@@ -85,7 +86,6 @@ def normalize_feeds(raw):
     """Ta en cell med en eller flera URL:er och returnera lista."""
     if not raw:
         return []
-    # Stöd för komma, semikolon, radbrytningar och mellanslag
     parts = re.split(r"[\n,; ]+", str(raw).strip())
     return [p.strip() for p in parts if p.strip().startswith("http")]
 
@@ -109,8 +109,8 @@ def is_paywalled(url: str, title: str = "", summary: str = "") -> bool:
     return any(h in text for h in PAYWALL_HINTS)
 
 def summarize_sv(title: str, url: str) -> str:
-    """Kort svensk sammanfattning via OpenAI. Fail-safe: tom sträng vid fel."""
-    if not OPENAI_API_KEY:
+    """Kort svensk sammanfattning via OpenAI. Fail-safe: tom sträng vid fel eller saknad nyckel."""
+    if not openai_client:
         return ""
     try:
         resp = openai_client.chat.completions.create(
@@ -119,7 +119,7 @@ def summarize_sv(title: str, url: str) -> str:
                 "role": "user",
                 "content": (
                     "Sammanfatta nyheten på svenska i max 40 ord. "
-                    "Ingen rubrik, inga emojis. Fokusera på vad som hänt och varför det spelar roll.\n\n"
+                    "Ingen rubrik, inga emojis. Vad har hänt och varför spelar det roll?\n\n"
                     f"Titel: {title}\nLänk: {url}"
                 ),
             }],
@@ -134,7 +134,7 @@ def summarize_sv(title: str, url: str) -> str:
 # ──────────────────────────────────────────────────────────────
 # 4) Huvudflöde
 # ──────────────────────────────────────────────────────────────
-def fetch_and_append():
+def fetch_and_append() -> int:
     if not SPREADSHEET_ID:
         raise RuntimeError("Saknar SPREADSHEET_ID")
     sh = get_sheet_client()
@@ -202,7 +202,7 @@ def fetch_and_append():
                     import_date,
                 ])
 
-                existing_ids.add(_id)  # så vi inte dubblar i samma körning
+                existing_ids.add(_id)  # undvik dubletter i samma körning
                 log.info(f"    + {title[:60]}{'...' if len(title)>60 else ''}")
                 time.sleep(SLEEP_BETWEEN_ITEMS)
 
